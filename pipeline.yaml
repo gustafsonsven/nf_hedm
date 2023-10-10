@@ -1,0 +1,51 @@
+config:
+  interactive: True
+
+pipeline:
+
+  # Collect map data
+  - pipeline.MultiplePipelineItem:
+      items:
+        - common.SpecReader:
+            spec_config:
+              station: id3a
+              experiment_type: TOMO
+              spec_scans:
+              - spec_file: /nfs/chess/raw/2023-2/id3a/shanks-3731-a/ti-13-exsitu/spec.log
+                scan_numbers:
+                - 8
+            detector_names:
+              - retiga
+            schema: darkfield
+        - common.SpecReader:
+            spec_config:
+              station: id3a
+              experiment_type: TOMO
+              spec_scans:
+              - spec_file: /nfs/chess/raw/2023-2/id3a/shanks-3731-a/ti-13-exsitu/spec.log
+                scan_numbers:
+                - 9
+            detector_names:
+              - retiga
+            schema: brightfield
+        - common.MapReader:
+            filename: map.yaml
+            detector_names:
+              - retiga
+            schema: tomofields
+        - common.YAMLReader:
+            filename: retiga.yaml
+            schema: tomo.models.Detector
+  - tomo.TomoCHESSMapConverter
+
+  # Full tomography reconstruction
+  - tomo.TomoDataProcessor:
+      reduce_data: True
+      find_center: True
+      reconstruct_data: True
+      output_folder: output
+      save_figs: 'only'
+  - common.NexusWriter:
+      filename: ti-13-exsitu_reconstructed_tomo.nxs
+      force_overwrite: true
+
