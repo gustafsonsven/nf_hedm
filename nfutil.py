@@ -1124,9 +1124,7 @@ def test_many_orientations_at_single_coordinate(experiment,image_stack,coord_to_
         n_oris = np.shape(all_exp_maps)[0]
     else: 
         # We are in multiprocessing mode and need to pull only some of the exp_maps
-        print(start)
-        print(stop)
-        all_exp_maps = all_exp_maps[start:stop,:]
+        all_exp_maps = all_exp_maps[start:stop]
         n_oris = np.shape(all_exp_maps)[0]
 
     # Initialize the confidence array to be returned
@@ -1135,21 +1133,21 @@ def test_many_orientations_at_single_coordinate(experiment,image_stack,coord_to_
     # Check each orientation at the coordinate point
     for i in np.arange(n_oris):
         # Grab orientation information
-        all_angles = all_angles[start+i]
+        angles = all_angles[start+i]
         rMat_ss = all_rMat_ss[start+i]
         gvec_cs = all_gvec_cs[start+i]
         rMat_c = all_rMat_c[start+i]
         # Find intercept point of each g-vector on the detector
         det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test) # Convert angles to xy detector positions
         # Check detector positions and omega values to see if intensity exisits
-        all_confidence[i] = quant_and_clip_confidence(det_xy, all_angles[:, 2], image_stack,
+        all_confidence[i] = quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
                                         base, inv_deltas, clip_vals, bsp, ome_edges)
 
     # Find the index of the max confidence
     idx = np.where(all_confidence == np.max(all_confidence))[0][0] # Grab just the first instance if there is a tie
 
     # What is the hightest confidence orientation and what is its confidence
-    exp_map = all_exp_maps[idx,:]
+    exp_map = all_exp_maps[idx]
     confidence = all_confidence[idx]
 
     # Refine that orientation if we want
@@ -1159,6 +1157,66 @@ def test_many_orientations_at_single_coordinate(experiment,image_stack,coord_to_
     
     return exp_map, confidence, idx, start, stop
 
+def test_many_orientations_at_many_coordinates(experiment,image_stack,coord_to_test,orientation_data_to_test,chunk_oris_or_coords,start,stop,refine_yes_no=0):
+    """
+        Goal: 
+
+        Input:
+            
+        Output:
+    """
+    
+    # Grab some experiment data
+    tD = experiment.tVec_d # Detector X,Y,Z translation (mm)
+    rD = experiment.rMat_d # Detector rotation matrix (rad)
+    tS = experiment.tVec_s # Sample X,Y,Z translation (mm)
+    base = experiment.base # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
+    inv_deltas = experiment.inv_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
+    clip_vals = experiment.clip_vals # Number of pixels along X,Y [mm,mm]
+    bsp = experiment.bsp # Beam stop parameters [vertical center,width] [mm,mm]
+    ome_edges = experiment.ome_edges # Omega start stop positions for each frame in image stack
+
+    # Unpack the orientation information
+    all_exp_maps, all_angles, all_rMat_ss, all_gvec_cs, all_rMat_c = orientation_data_to_test
+
+    # How many orientations do we have?
+    if start == 0 and stop == 0:
+        # We are not in multiprocessing mode
+        n_oris = np.shape(all_exp_maps)[0]
+    else: 
+        # We are in multiprocessing mode and need to pull only some of the exp_maps
+        all_exp_maps = all_exp_maps[start:stop]
+        n_oris = np.shape(all_exp_maps)[0]
+
+    # Initialize the confidence array to be returned
+    all_confidence = np.zeros(n_oris)
+
+    # Check each orientation at the coordinate point
+    for i in np.arange(n_oris):
+        # Grab orientation information
+        angles = all_angles[start+i]
+        rMat_ss = all_rMat_ss[start+i]
+        gvec_cs = all_gvec_cs[start+i]
+        rMat_c = all_rMat_c[start+i]
+        # Find intercept point of each g-vector on the detector
+        det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test) # Convert angles to xy detector positions
+        # Check detector positions and omega values to see if intensity exisits
+        all_confidence[i] = quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
+                                        base, inv_deltas, clip_vals, bsp, ome_edges)
+
+    # Find the index of the max confidence
+    idx = np.where(all_confidence == np.max(all_confidence))[0][0] # Grab just the first instance if there is a tie
+
+    # What is the hightest confidence orientation and what is its confidence
+    exp_map = all_exp_maps[idx]
+    confidence = all_confidence[idx]
+
+    # Refine that orientation if we want
+    if refine_yes_no == 1:
+        # Refine the orientation
+        exp_map, confidence = test_single_orientation_at_single_coordinate(experiment,image_stack,coord_to_test,exp_map,refine_yes_no)
+    
+    return exp_map, confidence, idx, start, stop
 def precompute_diffraction_data_of_single_orientation(experiment,exp_map):
     """
         Goal: 
@@ -1349,10 +1407,7 @@ def precompute_diffraction_data(experiment,controller,exp_maps_to_precompute):
                 if stops[i] >= n_oris:
                     stops[i] = n_oris
             # Tell the user about the chunking
-            if num_chunks > 1:
-                print(f'Each CPU will be given {num_chunks} chunks with {chunk_size} orientations in each chunk.')
-            else:
-                print(f'Each CPU will be given 1 chunk with {chunk_size} orientations.')
+            print(f'There are {num_chunks} chunks with {chunk_size} orientations in each chunk.')
             # Initialize arrays to drop the precomputed data
             all_exp_maps = [None] * n_oris
             all_angles = [None] * n_oris
@@ -1414,6 +1469,8 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
     n_coords = np.shape(coordinates_to_test)[0]
     # How many CPUs?
     ncpus = controller.get_process_count()
+    # Start a timer
+    t0 = timeit.default_timer()
     # What senario do we have?
     if n_oris == 1 and n_coords == 1:
         # =======================================================================
@@ -1461,10 +1518,7 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
                 if stops[i] >= n_coords:
                     stops[i] = n_coords
             # Tell the user about the chunking
-            if num_chunks > 1:
-                print(f'Each CPU will be given {num_chunks} chunks with {chunk_size} coordinate points in each chunk.')
-            else:
-                print(f'Each CPU will be given 1 chunk with {chunk_size} coordinate points.')
+            print(f'There are {num_chunks} chunks with {chunk_size} coordinate points in each chunk.')
             # Initialize arrays to drop the exp_map and confidence
             all_exp_maps = np.zeros([n_coords,3])
             all_confidence = np.zeros(n_coords)
@@ -1516,10 +1570,7 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
                 if stops[i] >= n_oris:
                     stops[i] = n_oris
             # Tell the user about the chunking
-            if num_chunks > 1:
-                print(f'Each CPU will be given {num_chunks} chunks with {chunk_size} orientations in each chunk.')
-            else:
-                print(f'Each CPU will be given 1 chunk with {chunk_size} orientations.')
+            print(f'There are {num_chunks} chunks with {chunk_size} orientations in each chunk.')
             # Initialize arrays to drop the exp_map and confidence
             all_exp_maps = np.zeros([num_chunks,3])
             all_confidence = np.zeros(num_chunks)
@@ -1573,7 +1624,7 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
                 all_exp_maps = np.zeros([n_coords,3])
                 all_confidence = np.zeros(n_coords)
                 all_idx = np.zeros(n_coords)
-                for i in np.aranage(n_oris):
+                for i in np.arange(n_oris):
                     # Repack this orientation's data
                     orientation_data_to_test = [test_exp_maps[i], test_angles[i], test_rMat_ss[i], test_gvec_cs[i], test_rMat_c[i]]
                     exp_maps, confidences, start, stop = test_single_orientation_at_many_coordinates(experiment,image_stack,coordinates_to_test,orientation_data_to_test,refine_yes_no=0,start=0,stop=0) # Do not refine here
@@ -1584,7 +1635,7 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
                     all_idx[to_replace] = i
                 # We have found the best exp_map at each coordindate - refine if we wanted to
                 if refine_yes_no == 1:
-                    for i in np.aranage(n_coords):
+                    for i in np.arange(n_coords):
                         idx = all_idx[i]
                         orientation_data_to_test = [test_exp_maps[idx], test_angles[idx], test_rMat_ss[idx], test_gvec_cs[idx], test_rMat_c[idx]]
                         all_exp_maps[i], all_confidence[i] = test_single_orientation_at_single_coordinate(experiment,image_stack,coordinates_to_test[i,:],orientation_data_to_test,refine_yes_no=1)
@@ -1606,17 +1657,14 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
                     if stops[i] >= n_coords:
                         stops[i] = n_coords
                 # Tell the user about the chunking
-                if num_chunks > 1:
-                    print(f'Each CPU will be given {num_chunks} chunks with {chunk_size} coordinate points for each of the {n_oris} orientation.')
-                else:
-                    print(f'Each CPU will be given 1 chunk with {chunk_size} coordinate points for each of the {n_oris} orientations.')
+                print(f'There are {num_chunks} chunks with {chunk_size} coordinate points for each of the {n_oris} orientation.')
                 # Initialize arrays to drop the exp_map and confidence
                 all_exp_maps = np.zeros([n_coords,3])
                 all_confidence = np.zeros(n_coords)
                 all_idx = np.zeros(n_coords)
                 # Unpack the orientation data
                 test_exp_maps, test_angles, test_rMat_ss, test_gvec_cs, test_rMat_c = orientation_data_to_test
-                for i in np.aranage(n_oris):
+                for i in np.arange(n_oris):
                     exp_maps = np.zeros([n_coords,3])
                     confidence = np.zeros(n_coords)
                     # Repack this orientation's data
@@ -1638,11 +1686,11 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
                     # Replace any which are better than before
                     to_replace = confidence > all_confidence
                     all_exp_maps[to_replace,:] = exp_maps[to_replace]
-                    all_confidence[to_replace] = confidences[to_replace]
+                    all_confidence[to_replace] = confidence[to_replace]
                     all_idx[to_replace] = i
                 # We have found the best exp_map at each coordindate - refine if we wanted to
                 if refine_yes_no == 1:
-                    for i in np.aranage(n_coords):
+                    for i in np.arange(n_coords):
                         idx = all_idx[i]
                         orientation_data_to_test = [test_exp_maps[idx], test_angles[idx], test_rMat_ss[idx], test_gvec_cs[idx], test_rMat_c[idx]]
                         all_exp_maps[i], all_confidence[i] = test_single_orientation_at_single_coordinate(experiment,image_stack,coordinates_to_test[i,:],orientation_data_to_test,refine_yes_no=1)
@@ -1656,7 +1704,7 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
                 all_exp_maps = np.zeros([n_coords,3])
                 all_confidence = np.zeros(n_coords)
                 all_idx = np.zeros(n_coords)
-                for i in np.aranage(n_coords):
+                for i in np.arange(n_coords):
                     exp_map, confidence, idx, start, stop = test_many_orientations_at_single_coordinate(experiment,image_stack,coordinates_to_test[i,:],orientation_data_to_test,refine_yes_no=refine_yes_no,start=0,stop=0)
                     # Replace any which are better than before
                     all_exp_maps[i,:] = exp_map
@@ -1680,17 +1728,14 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
                     if stops[i] >= n_oris:
                         stops[i] = n_oris
                 # Tell the user about the chunking
-                if num_chunks > 1:
-                    print(f'Each CPU will be given {num_chunks} chunks with {chunk_size} orientations for each of the {n_coords} coordinate points.')
-                else:
-                    print(f'Each CPU will be given 1 chunk with {chunk_size} orientations for each of the {n_coords} coordinate points.')
+                print(f'Each CPU will be given {num_chunks} chunks with {chunk_size} orientations for each of the {n_coords} coordinate points.')
                 # Initialize arrays to drop the exp_map and confidence
                 all_exp_maps = np.zeros([n_coords,3])
                 all_confidence = np.zeros(n_coords)
                 all_idx = np.zeros(n_coords)
                 # Unpack the orientation data
                 test_exp_maps, test_angles, test_rMat_ss, test_gvec_cs, test_rMat_c = orientation_data_to_test
-                for i in np.aranage(n_coords):
+                for i in np.arange(n_coords):
                     exp_maps = np.zeros([num_chunks,3])
                     confidence = np.zeros(num_chunks)
                     idxs = np.zeros(num_chunks)
@@ -1720,7 +1765,9 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
                     all_exp_maps[i,:] = exp_maps[idx,:]
                     all_confidence[i] = confidences[idx]
                     all_idx[i] = idxs[idx]
-
+    # How long did it take?
+    t1 = timeit.default_timer()
+    print(f'All done.  Took {np.round((t1-t0)/60)} minutes.')
     return all_exp_maps, all_confidence, all_idx
 
 # %% ============================================================================

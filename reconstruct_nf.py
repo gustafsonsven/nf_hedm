@@ -269,11 +269,11 @@ precomputed_orientation_data = nfutil.precompute_diffraction_data(experiment,con
 # %% Testing Ground 2
 #==============================================================================
 importlib.reload(nfutil)
-ncpus = 2
+ncpus = 128
 controller = nfutil.build_controller(
     ncpus=ncpus, chunk_size=chunk_size, check=check, generate=generate, limit=limit)
 
-all_exp_maps, all_confidence, all_idx = nfutil.test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_crds[0,:],refine_yes_no=0)
+all_exp_maps, all_confidence, all_idx = nfutil.test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_crds,refine_yes_no=0)
 
 
 #==============================================================================
