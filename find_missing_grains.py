@@ -35,7 +35,7 @@ import os
 
 # Hexrd imports
 from hexrd.transforms import xfcapi
-from hexrd.grainmap import nfutil_SEG as nfutil
+import nfutil as nfutil
 import timeit
 from hexrd import rotations
 from hexrd import constants
@@ -417,8 +417,12 @@ if re_run_and_save == 1:
     test_crds = test_crds_full[to_use, :]
 
     # Run the reconstruction
-    raw_confidence_full = nfutil.test_orientations(image_stack, experiment, test_crds,
+    raw_confidence = nfutil.test_orientations(image_stack, experiment, test_crds,
                                         controller,multiprocessing_start_method)
+    raw_confidence_full = np.zeros([len(experiment.exp_maps), len(test_crds_full)])
+    for ii in np.arange(raw_confidence_full.shape[0]):
+        raw_confidence_full[ii, to_use] = raw_confidence[ii, :]
+    
     # Process the confidence array
     grain_map, confidence_map = nfutil.process_raw_confidence(raw_confidence_full, Xs.shape, id_remap=nf_to_ff_id_map)
     # Save and NPZ

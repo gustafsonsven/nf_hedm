@@ -23,6 +23,7 @@ import copy
 import matplotlib.pyplot as plt
 import math
 from scipy import stats
+
 # import bisect # The function that calls this does not work with numba
 
 # HEXRD Imports
@@ -79,13 +80,14 @@ class ProcessController:
     the progress of the process"""
 
     def __init__(self, result_handler=None, progress_observer=None, ncpus=1,
-                 chunk_size=100):
+                 chunk_size=-1):
         self.rh = result_handler
         self.po = progress_observer
         self.ncpus = ncpus
         self.chunk_size = chunk_size
         self.limits = {}
         self.timing = []
+        self.multiprocessing_start_method = 'fork' if hasattr(os, 'fork') else 'spawn'
 
     # progress handling -------------------------------------------------------
 
@@ -257,7 +259,7 @@ def checking_result_handler(filename):
 # ===============================================================================
 # Check the image stack for signal
 @numba.njit(nogil=True, cache=True)
-def _quant_and_clip_confidence(coords, angles, image,
+def quant_and_clip_confidence(coords, angles, image,
                                base, inv_deltas, clip_vals, bsp, ome_edges):
     """quantize and clip the parametric coordinates in coords + angles
 
@@ -729,7 +731,7 @@ def find_single_orientation(image_stack, experiment, test_crd, test_exp_maps, te
         print(where[0])
 
     # Refine that orientation
-    refined_exp_map, refined_conf = refine_single_orientation(image_stack, experiment, test_crd, new_exp_map, misorientation_bnd, misorientation_spacing)
+    refined_exp_map, refined_conf = refine_single_coordinate(image_stack, experiment, test_crd, new_exp_map, misorientation_bnd, misorientation_spacing)
     print(f'Refined confidence of final orientation is {np.round(refined_conf,2)}.')
     return refined_exp_map,refined_conf
 
@@ -922,6 +924,825 @@ def gather_confidence(controller, confidence, n_grains, n_coords):
         confidence = global_confidence.reshape(n_coords, n_grains).T
         controller.handle_result("confidence", confidence)
 
+
+
+    """
+        Notes: 
+            - No print statements/logs should crop up from these functions
+            - These do not handle any sort of chunking - chunking should be done in functions which call these
+            - Distortion of the detector is not handled currently.  
+
+    """
+
+# %% ============================================================================
+# Refactored Processor Functions
+# ===============================================================================
+def test_single_orientation_at_single_coordinate(experiment,image_stack,coord_to_test,orientation_data_to_test,refine_yes_no=0):
+    """
+        Goal: 
+
+        Input:
+            
+        Output:
+
+    """
+    if refine_yes_no == 0:
+        # No refinement needed - just test the orientation 
+        # Grab some experiment data
+        tD = experiment.tVec_d # Detector X,Y,Z translation (mm)
+        rD = experiment.rMat_d # Detector rotation matrix (rad)
+        tS = experiment.tVec_s # Sample X,Y,Z translation (mm)
+        base = experiment.base # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
+        inv_deltas = experiment.inv_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
+        clip_vals = experiment.clip_vals # Number of pixels along X,Y [mm,mm]
+        bsp = experiment.bsp # Beam stop parameters [vertical center,width] [mm,mm]
+        ome_edges = experiment.ome_edges # Omega start stop positions for each frame in image stack
+        # Unpack the precomputed orientation data
+        exp_map, angles, rMat_ss, gvec_cs, rMat_c = orientation_data_to_test
+        # Calculate the sample rotation matrix
+        rMat_ss = xfcapi.make_sample_rmat(experiment.chi, angles[:, 2])
+        # Convert the angles to g-vectors
+        gvec_cs = xfcapi.anglesToGVec(angles, np.squeeze(rMat_c))
+        # Find where those g-vectors intercept the detector from our coordinate point
+        det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, np.squeeze(rMat_c), tD, tS, coord_to_test)
+        # Check xy detector positions and omega value to see if intensity exisits
+        confidence = quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
+                                        base, inv_deltas, clip_vals, bsp, ome_edges)
+        # Return the orienation and its confidence
+    elif refine_yes_no == 1:
+        # Refinement needed
+        # Grab some experiment data
+        plane_data = experiment.plane_data # Packaged information about the material and HKLs
+        detector_params = experiment.detector_params # Detector tilts, position, as well as stage position and chi [?,mm,mm,chi]
+        pixel_size = experiment.pixel_size # Pixel size (mm)
+        ome_range = experiment.ome_range # Start and stop omega position of image stack (rad)
+        ome_period = experiment.ome_period # Defined omega period for HEXRD to work in (rad)
+        tD = experiment.tVec_d # Detector X,Y,Z translation (mm)
+        rD = experiment.rMat_d # Detector rotation matrix (rad)
+        tS = experiment.tVec_s # Sample X,Y,Z translation (mm)
+        base = experiment.base # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
+        inv_deltas = experiment.inv_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
+        clip_vals = experiment.clip_vals # Number of pixels along X,Y [mm,mm]
+        bsp = experiment.bsp # Beam stop parameters [vertical center,width] [mm,mm]
+        ome_edges = experiment.ome_edges # Omega start stop positions for each frame in image stack
+        panel_dims_expanded = [(-10, -10), (10, 10)] # Pixels near the edge of the detector to avoid
+        ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.]) # Assume grain is unstrained 
+
+        # Define misorientation grid
+        mis_amt = experiment.misorientation_bound_rad # This is the amount of misorientation allowed on one side of the original orientation
+        spacing = experiment.misorientation_step_rad # This is the spacing between orientations
+        ori_pts = np.arange(-mis_amt, (mis_amt+(spacing*0.999)),spacing) # Create a linup of the orientations to go on either side
+        XsO, YsO, ZsO = np.meshgrid(ori_pts, ori_pts, ori_pts) # Make that 3D
+        grid0 = np.vstack([XsO.flatten(), YsO.flatten(), ZsO.flatten()]).T # Re-arange
+
+        # Add misorientation to the trial exp_map
+        exp_map_to_test, angles, rMat_ss, gvec_cs, rMat_c = orientation_data_to_test
+        all_exp_maps = grid0 + np.r_[exp_map_to_test] # Define all sub orientations around the single orientation
+
+        # Initialize an array to hold the confidence values
+        n_oris = ori_pts.shape[0]**3
+        all_confidence = np.zeros(n_oris)
+
+        # Check each orientation for its confidence at the coordinate point
+        for i in np.arange(n_oris):
+            # Grab orientation information
+            exp_map = all_exp_maps[i,:]
+            # Transform exp_map to rotation matrix
+            rMat_c = xfcapi.makeRotMatOfExpMap(exp_map.T)
+            # Define all parameters for the orientation (strain and orientation)
+            gparams = np.hstack([exp_map, ref_gparams])
+            # Simulate the the diffraction events
+            sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_dims=panel_dims_expanded,
+                                                pixel_pitch=pixel_size,ome_range=ome_range,ome_period=ome_period,
+                                                distortion=None)
+            # Pull just the angles for each g-vector
+            all_angles = sim_results[2]
+            # Calculate the sample rotation matrix
+            rMat_ss = xfcapi.make_sample_rmat(experiment.chi, all_angles[:, 2])
+            # Convert the angles to g-vectors
+            gvec_cs = xfcapi.anglesToGVec(all_angles, rMat_c)
+            # Find where those g-vectors intercept the detector from our coordinate point
+            det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test)
+            # Check xy detector positions and omega value to see if intensity exisits
+            all_confidence[i] = quant_and_clip_confidence(det_xy, all_angles[:, 2], image_stack,
+                                            base, inv_deltas, clip_vals, bsp, ome_edges)
+
+        # Find the index of the max confidence
+        idx = np.where(all_confidence == np.max(all_confidence))[0][0] # Grab just the first instance if there is a tie
+
+        # What is the hightest confidence orientation and what is its confidence
+        exp_map = all_exp_maps[idx,:]
+        confidence = all_confidence[idx]
+    else:
+        print('ERROR: refine_yes_no must be 0 or 1')
+    return exp_map, confidence
+
+def test_single_orientation_at_many_coordinates(experiment,image_stack,coords_to_test,orientation_data_to_test,refine_yes_no=0,start=0,stop=0):
+    """
+        Goal: 
+            Test a single orientation at a large number of coordinate points to check the 
+                confidence the orientation exists at each coordinate point.  
+        Input:
+            
+        Output:
+            - Numpy array of size [# of coordinate points] containing a confidence value
+                for each point.  
+    """
+    
+    # Grab some experiment data
+    tD = experiment.tVec_d # Detector X,Y,Z translation (mm)
+    rD = experiment.rMat_d # Detector rotation matrix (rad)
+    tS = experiment.tVec_s # Sample X,Y,Z translation (mm)
+    base = experiment.base # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
+    inv_deltas = experiment.inv_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
+    clip_vals = experiment.clip_vals # Number of pixels along X,Y [mm,mm]
+    bsp = experiment.bsp # Beam stop parameters [vertical center,width] [mm,mm]
+    ome_edges = experiment.ome_edges # Omega start stop positions for each frame in image stack
+
+    # Grab orientation information
+    exp_map, angles, rMat_ss, gvec_cs, rMat_c = orientation_data_to_test
+
+    # How many coordinate points do we have to test?
+    if start == 0 and stop == 0:
+        # We are not in multiprocessing mode
+        n_coords = np.shape(coords_to_test)[0]
+    else: 
+        # We are in multiprocessing mode and need to pull only some of the exp_maps
+        coords_to_test = coords_to_test[start:stop,:]
+        n_coords = np.shape(coords_to_test)[0]
+
+    # Initialize the confidence array to be returned
+    all_exp_maps = np.zeros([n_coords,3])
+    all_confidence = np.zeros(n_coords)
+
+    # Check each orientation at the coordinate point
+    for i in np.arange(n_coords):
+        # What is our coordinate?
+        coord_to_test = coords_to_test[i,:]
+        # Find intercept point of each g-vector on the detector
+        det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, np.squeeze(rMat_c), tD, tS, coord_to_test) # Convert angles to xy detector positions
+        # Check detector positions and omega values to see if intensity exisits
+        all_confidence[i] = quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
+                                        base, inv_deltas, clip_vals, bsp, ome_edges)
+        if refine_yes_no == 0:
+            all_exp_maps[i] = exp_map
+        elif refine_yes_no == 1:
+            all_exp_maps[i], all_confidence[i] = test_single_orientation_at_single_coordinate(experiment,image_stack,coord_to_test,exp_map,refine_yes_no)
+        else:
+            print('ERROR: refine_yes_no must be 0 or 1')
+        
+        
+    # Return the confidence value at each coordinate point
+    return all_exp_maps, all_confidence, start, stop
+
+def test_many_orientations_at_single_coordinate(experiment,image_stack,coord_to_test,orientation_data_to_test,refine_yes_no=0,start=0,stop=0):
+    """
+        Goal: 
+            Test many orientations against a single coordinate to determine which orientation is the best fit.  If desired
+                this function can call the refinement funciton such that it produces the best orientation.  
+        Input:
+            
+        Output:
+    """
+    
+    # Grab some experiment data
+    tD = experiment.tVec_d # Detector X,Y,Z translation (mm)
+    rD = experiment.rMat_d # Detector rotation matrix (rad)
+    tS = experiment.tVec_s # Sample X,Y,Z translation (mm)
+    base = experiment.base # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
+    inv_deltas = experiment.inv_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
+    clip_vals = experiment.clip_vals # Number of pixels along X,Y [mm,mm]
+    bsp = experiment.bsp # Beam stop parameters [vertical center,width] [mm,mm]
+    ome_edges = experiment.ome_edges # Omega start stop positions for each frame in image stack
+
+    # Unpack the orientation information
+    all_exp_maps, all_angles, all_rMat_ss, all_gvec_cs, all_rMat_c = orientation_data_to_test
+
+    # How many orientations do we have?
+    if start == 0 and stop == 0:
+        # We are not in multiprocessing mode
+        n_oris = np.shape(all_exp_maps)[0]
+    else: 
+        # We are in multiprocessing mode and need to pull only some of the exp_maps
+        print(start)
+        print(stop)
+        all_exp_maps = all_exp_maps[start:stop,:]
+        n_oris = np.shape(all_exp_maps)[0]
+
+    # Initialize the confidence array to be returned
+    all_confidence = np.zeros(n_oris)
+
+    # Check each orientation at the coordinate point
+    for i in np.arange(n_oris):
+        # Grab orientation information
+        all_angles = all_angles[start+i]
+        rMat_ss = all_rMat_ss[start+i]
+        gvec_cs = all_gvec_cs[start+i]
+        rMat_c = all_rMat_c[start+i]
+        # Find intercept point of each g-vector on the detector
+        det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test) # Convert angles to xy detector positions
+        # Check detector positions and omega values to see if intensity exisits
+        all_confidence[i] = quant_and_clip_confidence(det_xy, all_angles[:, 2], image_stack,
+                                        base, inv_deltas, clip_vals, bsp, ome_edges)
+
+    # Find the index of the max confidence
+    idx = np.where(all_confidence == np.max(all_confidence))[0][0] # Grab just the first instance if there is a tie
+
+    # What is the hightest confidence orientation and what is its confidence
+    exp_map = all_exp_maps[idx,:]
+    confidence = all_confidence[idx]
+
+    # Refine that orientation if we want
+    if refine_yes_no == 1:
+        # Refine the orientation
+        exp_map, confidence = test_single_orientation_at_single_coordinate(experiment,image_stack,coord_to_test,exp_map,refine_yes_no)
+    
+    return exp_map, confidence, idx, start, stop
+
+def precompute_diffraction_data_of_single_orientation(experiment,exp_map):
+    """
+        Goal: 
+            Read in one orientations and pre-compute all needed diffraction information on one CPU.
+        Input:
+            experiment: Packaged information holding experimental details
+            controller: Packaged information holding multiprocessing details
+            exp_maps_to_compute: exponential maps of each orientation to process
+                Must of shape of (3) or (n_oris,3)
+        Output:
+            all_exp_maps: exponential maps of each orientation 
+                Will be of shape (n_oris,3)
+            all_angles: list of eta, theta, omega data for each diffraction event of each orientation
+                Will be of length = n_oris
+            all_rMat_ss: list of sample rotation matrices for each diffraction event of each orientation
+                Will be of length = n_oris
+            all_gvec_cs: list of g-vectors for each diffraction event for each grain
+                Will be of length = n_oris
+            all_rMat_c: rotation matrices of each orientation 
+                Will be of shape (n_oris,3,3)
+    """
+    # Handle incoming size of exp_map
+    exp_map = np.squeeze(exp_map)
+    # Grab some experiment data
+    plane_data = experiment.plane_data # Packaged information about the material and HKLs
+    detector_params = experiment.detector_params # Detector tilts, position, as well as stage position and chi [?,mm,mm,chi]
+    pixel_size = experiment.pixel_size # Pixel size (mm)
+    ome_range = experiment.ome_range # Start and stop omega position of image stack (rad)
+    ome_period = experiment.ome_period # Defined omega period for HEXRD to work in (rad)
+    panel_dims_expanded = [(-10, -10), (10, 10)] # Pixels near the edge of the detector to avoid
+    ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.]) # Assume grain is unstrained
+
+    # Transform exp_map to rotation matrix
+    rMat_c = xfcapi.makeRotMatOfExpMap(exp_map)
+    # Define all parameters for the orientation (strain and orientation)
+    gparams = np.hstack([exp_map, ref_gparams])
+    # Simulate the the diffraction events
+    sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_dims=panel_dims_expanded,
+                                        pixel_pitch=pixel_size,ome_range=ome_range,ome_period=ome_period,
+                                        distortion=None)
+    # Pull just the angles for each g-vector
+    angles = sim_results[2]
+    # Calculate the sample rotation matrix
+    rMat_ss = xfcapi.make_sample_rmat(experiment.chi, angles[:, 2])
+    # Convert the angles to g-vectors
+    gvec_cs = xfcapi.anglesToGVec(angles, rMat_c)
+    # Handle arrays not being the correct size if we have only one orientation
+    if len(np.shape(exp_map)) == 1: exp_map = np.expand_dims(exp_map,0)
+    if len(np.shape(rMat_c)) == 2: rMat_c = np.expand_dims(rMat_c,0)
+    # Return precomputed data
+    return exp_map, angles, rMat_ss, gvec_cs, rMat_c
+
+def precompute_diffraction_data_of_many_orientations(experiment,exp_maps,start=0,stop=0):
+    """
+        Goal: 
+            Read in many orientations and pre-compute all needed diffraction information on one CPU.
+        Input:
+            experiment: Packaged information holding experimental details
+            controller: Packaged information holding multiprocessing details
+            exp_maps_to_compute: exponential maps of each orientation to process
+                Must of shape of (n_oris,3)
+        Output:
+            all_exp_maps: exponential maps of each orientation 
+                Will be of shape (n_oris,3)
+            all_angles: list of eta, theta, omega data for each diffraction event of each orientation
+                Will be of length = n_oris
+            all_rMat_ss: list of sample rotation matrices for each diffraction event of each orientation
+                Will be of length = n_oris
+            all_gvec_cs: list of g-vectors for each diffraction event for each grain
+                Will be of length = n_oris
+            all_rMat_c: rotation matrices of each orientation 
+                Will be of shape (n_oris,3,3)
+    """
+
+    # Grab some experiment data
+    plane_data = experiment.plane_data # Packaged information about the material and HKLs
+    detector_params = experiment.detector_params # Detector tilts, position, as well as stage position and chi [?,mm,mm,chi]
+    pixel_size = experiment.pixel_size # Pixel size (mm)
+    ome_range = experiment.ome_range # Start and stop omega position of image stack (rad)
+    ome_period = experiment.ome_period # Defined omega period for HEXRD to work in (rad)
+    panel_dims_expanded = [(-10, -10), (10, 10)] # Pixels near the edge of the detector to avoid
+    ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.]) # Assume grain is unstrained
+
+    # How many orientations do we have?
+    if start == 0 and stop == 0:
+        # We are not in multiprocessing mode
+        n_oris = np.shape(exp_maps)[0]
+    else: 
+        # We are in multiprocessing mode and need to pull only some of the exp_maps
+        exp_maps = exp_maps[start:stop,:]
+        n_oris = np.shape(exp_maps)[0]
+
+    # Initialize lists - these must be lists since some data is of a different size for each orientations
+    all_exp_maps = [None] * n_oris
+    all_angles = [None] * n_oris
+    all_rMat_ss = [None] * n_oris
+    all_gvec_cs = [None] * n_oris
+    all_rMat_c = [None] * n_oris
+    # Loop through the orientations and precompute information
+    for i in np.arange(n_oris):
+        # What orientation are we looking at?
+        exp_map = exp_maps[i]
+        # Transform exp_map to rotation matrix
+        rMat_c = xfcapi.makeRotMatOfExpMap(exp_map.T)
+        # Define all parameters for the orientation (strain and orientation)
+        gparams = np.hstack([exp_map, ref_gparams])
+        # Simulate the the diffraction events
+        sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_dims=panel_dims_expanded,
+                                            pixel_pitch=pixel_size,ome_range=ome_range,ome_period=ome_period,
+                                            distortion=None)
+        # Pull just the angles for each g-vector
+        angles = sim_results[2]
+        # Calculate the sample rotation matrix
+        rMat_ss = xfcapi.make_sample_rmat(experiment.chi, angles[:, 2])
+        # Convert the angles to g-vectors
+        gvec_cs = xfcapi.anglesToGVec(angles, rMat_c)
+        # Drop data into arrays
+        all_exp_maps[i] = exp_map
+        all_angles[i] = angles
+        all_rMat_ss[i] = rMat_ss
+        all_gvec_cs[i] = gvec_cs
+        all_rMat_c[i] = rMat_c
+
+    # Return precomputed data
+    return all_exp_maps, all_angles, all_rMat_ss, all_gvec_cs, all_rMat_c, start, stop
+
+# %% ============================================================================
+# Refactored Multi-Processor Handler Functions
+# ===============================================================================
+def precompute_diffraction_data(experiment,controller,exp_maps_to_precompute):
+    """
+        Goal: 
+            Read in at least one orientation and pre-compute all needed diffraction information
+                on as many CPUs as desired.
+        Input:
+            experiment: Packaged information holding experimental details
+            controller: Packaged information holding multiprocessing details
+            exp_maps_to_compute: exponential maps of each orientation to process
+                Must of shape of either (3) or (n_oris,3)
+        Output:
+            all_exp_maps: exponential maps of each orientation 
+                Will be of shape (n_oris,3)
+            all_angles: list of eta, theta, omega data for each diffraction event of each orientation
+                Will be of length = n_oris
+            all_rMat_ss: list of sample rotation matrices for each diffraction event of each orientation
+                Will be of length = n_oris
+            all_gvec_cs: list of g-vectors for each diffraction event for each grain
+                Will be of length = n_oris
+            all_rMat_c: rotation matrices of each orientation 
+                Will be of shape (n_oris,3,3)
+    """
+    # How many orientations?
+    if len(np.shape(exp_maps_to_precompute)) == 1: exp_maps_to_precompute = np.expand_dims(exp_maps_to_precompute,0)
+    n_oris = np.shape(exp_maps_to_precompute)[0]
+    # How many CPUs?
+    ncpus = controller.get_process_count()
+    # Are we dealing with one orientation or many?
+    if n_oris == 1:
+        # Single orientation, precompute the information
+        # Tell the user what we are doing
+        print('Precomputing diffraction data for 1 orientation on 1 CPU.')
+        all_exp_maps, all_angles, all_rMat_ss, all_gvec_cs, all_rMat_c = \
+            precompute_diffraction_data_of_single_orientation(experiment,exp_maps_to_precompute)
+    else:
+        # Many orientations, how many cores are we dealing with?
+        if ncpus == 1:
+            # Many orientations, single CPU
+            # Tell the user what we are doing
+            print(f'Precomputing diffraction data for {n_oris} orientations on 1 CPU.')
+            all_exp_maps, all_angles, all_rMat_ss, all_gvec_cs, all_rMat_c, start, stop = \
+                precompute_diffraction_data_of_many_orientations(experiment,exp_maps_to_precompute)
+        elif ncpus > 1:
+            # Many orientations, many CPUs
+            # Define the chunk size
+            chunk_size = controller.get_chunk_size()
+            if chunk_size == -1:
+                chunk_size = int(np.ceil(n_oris/ncpus))
+            # Tell the user what we are doing
+            print(f'Precomputing diffraction data for {n_oris} orientations on {ncpus} CPUs.')
+            # Create chunking
+            num_chunks = int(np.ceil(n_oris/chunk_size))
+            chunks = np.arange(num_chunks)
+            starts = np.zeros(num_chunks,dtype=int)
+            stops = np.zeros(num_chunks,dtype=int)
+            for i in np.arange(num_chunks):
+                starts[i] = i*chunk_size
+                stops[i] = i*chunk_size + chunk_size
+                if stops[i] >= n_oris:
+                    stops[i] = n_oris
+            # Tell the user about the chunking
+            if num_chunks > 1:
+                print(f'Each CPU will be given {num_chunks} chunks with {chunk_size} orientations in each chunk.')
+            else:
+                print(f'Each CPU will be given 1 chunk with {chunk_size} orientations.')
+            # Initialize arrays to drop the precomputed data
+            all_exp_maps = [None] * n_oris
+            all_angles = [None] * n_oris
+            all_rMat_ss = [None] * n_oris
+            all_gvec_cs = [None] * n_oris
+            all_rMat_c = [None] * n_oris
+            # Package all inputs to the distributor function
+            state = (starts,stops,experiment,exp_maps_to_precompute)
+            # Start the multiprocessing loop
+            set_multiprocessing_method(controller.multiprocessing_start_method)
+            with multiprocessing_pool(ncpus,state) as pool:
+                for vals1, vals2, vals3, vals4, vals5, start, stop in pool.imap_unordered(precompute_diffraction_data_distributor,chunks):
+                    # Grab the data as each CPU drops it
+                    all_exp_maps[start:stop] = vals1
+                    all_angles[start:stop] = vals2
+                    all_rMat_ss[start:stop] = vals3
+                    all_gvec_cs[start:stop] = vals4
+                    all_rMat_c[start:stop] = vals5
+                    # Clean up
+                    del vals1, vals2, vals3, vals4, vals5, start, stop
+            # Final cleanup
+            pool.close()
+            pool.join()
+        else:
+            print('Number of CPUs must be 1 or greater.')
+
+    # Handle arrays not being the correct size if we have only one orientation
+    if len(np.shape(all_exp_maps)) == 1: all_exp_maps = np.expand_dims(all_exp_maps,0)
+    if len(np.shape(all_rMat_c)) == 2: all_rMat_c = np.expand_dims(all_rMat_c,0)
+    # Say we are done and return precomputed data
+    print('Done precomputing orientation data.')
+    return all_exp_maps, all_angles, all_rMat_ss, all_gvec_cs, all_rMat_c
+
+def test_orientations_at_coordinates(experiment,controller,image_stack,orientation_data_to_test,coordinates_to_test,refine_yes_no=0):
+    """
+        Goal: 
+            Read in at least one orientation and at least one coordinate and output
+                - If one orientation with many coordinates, arrays of length n_coords
+                    - The exp_map at each coord (possibly refined)
+                    - The confidence of that exp_map
+                    - A dummy array since index is not important
+                - If many orientations with one coordinate, arrays of length 1
+                    - The best exp_map for the coordinate (possibly refined)
+                    - The confidence of that exp_map at that coordinate
+                    - The index of the original exp_map within the input exp_map array
+                - If many orientations and many cooridnates, arrays of length n_coords
+                    - The best exp_map for each coordinate (possibly refined)
+                    - The confidence of that exp_map at that coordinate
+                    - The index of the original exp_map within the input exp_map array
+        Input:
+            
+        Output:
+
+    """
+    # How many orientations?
+    n_oris = np.shape(orientation_data_to_test[0])[0]
+    # How many coordinate points
+    if len(np.shape(coordinates_to_test)) == 1: coordinates_to_test = np.expand_dims(coordinates_to_test,0)
+    n_coords = np.shape(coordinates_to_test)[0]
+    # How many CPUs?
+    ncpus = controller.get_process_count()
+    # What senario do we have?
+    if n_oris == 1 and n_coords == 1:
+        # =======================================================================
+        # TESTING ONE ORIENTATION AT ONE COORDINATE
+        # =======================================================================
+        # We need to return three objects
+            # The exp_map (possibly refined)
+            # The confidence at the cooridnate point of that exp_map
+            # A dummy index
+        # Tell the user what we are doing
+        print('Testing 1 orientation at 1 coordinate point on 1 CPU.')
+        # Test the orienation with a single processor
+        all_exp_maps, all_confidence = test_single_orientation_at_single_coordinate(experiment,image_stack,coordinates_to_test,orientation_data_to_test,refine_yes_no=refine_yes_no)
+        # Create dummy index
+        all_idx = 0
+    elif n_oris == 1 and n_coords != 1:
+        # =======================================================================
+        # TESTING ONE ORIENTATION AT MANY COORDINATES
+        # =======================================================================
+        # - If one orientation with many coordinates, arrays of length n_coords
+        #     - The exp_map at each coord (possibly refined)
+        #     - The confidence of that exp_map
+        #     - A dummy array since index is not important
+        if ncpus == 1:
+            # Single processor variant
+            # Tell the user what we are doing
+            print(f'Testing 1 orientation at {n_coords} coordinate points on 1 CPU.')
+            all_exp_maps, all_confidence, start, stop = test_single_orientation_at_many_coordinates(experiment,image_stack,coordinates_to_test,orientation_data_to_test,refine_yes_no=refine_yes_no,start=0,stop=0)
+        else:
+            # Multiprocessor variant - many coordinate points, many CPUs
+            # Define the chunk size
+            chunk_size = controller.get_chunk_size()
+            if chunk_size == -1:
+                chunk_size = int(np.ceil(n_coords/ncpus))
+            # Tell the user what we are doing
+            print(f'Testing 1 orientation at {n_coords} coordinate points on {ncpus} CPU.')
+            # Create chunking
+            num_chunks = int(np.ceil(n_coords/chunk_size))
+            chunks = np.arange(num_chunks)
+            starts = np.zeros(num_chunks,dtype=int)
+            stops = np.zeros(num_chunks,dtype=int)
+            for i in np.arange(num_chunks):
+                starts[i] = i*chunk_size
+                stops[i] = i*chunk_size + chunk_size
+                if stops[i] >= n_coords:
+                    stops[i] = n_coords
+            # Tell the user about the chunking
+            if num_chunks > 1:
+                print(f'Each CPU will be given {num_chunks} chunks with {chunk_size} coordinate points in each chunk.')
+            else:
+                print(f'Each CPU will be given 1 chunk with {chunk_size} coordinate points.')
+            # Initialize arrays to drop the exp_map and confidence
+            all_exp_maps = np.zeros([n_coords,3])
+            all_confidence = np.zeros(n_coords)
+            # Package all inputs to the distributor function
+            state = (starts,stops,experiment,image_stack,coordinates_to_test,orientation_data_to_test,refine_yes_no)
+            # Start the multiprocessing loop
+            set_multiprocessing_method(controller.multiprocessing_start_method)
+            with multiprocessing_pool(ncpus,state) as pool:
+                for vals1, vals2, start, stop in pool.imap_unordered(test_single_orientation_at_many_coordinates_distributor,chunks):
+                    # Grab the data as each CPU drops it
+                    all_exp_maps[start:stop,:] = vals1
+                    all_confidence[start:stop] = vals2
+                    # Clean up
+                    del vals1, vals2, start, stop
+            # Final cleanup
+            pool.close()
+            pool.join()
+        # Create dummy values
+        all_idx = np.zeros(n_coords)
+    elif n_oris != 1 and n_coords == 1:
+        # =======================================================================
+        # TESTING MANY ORIENTATIONS AT ONE COORDINATE
+        # =======================================================================
+        # - If many orientations with one coordinate, arrays of length 1
+        #     - The best exp_map for the coordinate (possibly refined)
+        #     - The confidence of that exp_map at that coordinate
+        #     - The index of the original exp_map within the input exp_map array
+        if ncpus == 1:
+            # Single processor variant
+            # Tell the user what we are doing
+            print(f'Testing {n_oris} orientations at 1 coordinate point on 1 CPU.')
+            all_exp_maps, all_confidence, all_idx = test_many_orientations_at_single_coordinate(experiment,image_stack,coordinates_to_test,orientation_data_to_test,refine_yes_no=refine_yes_no,start=0,stop=0)
+        else:
+            # Multiprocessor variant - many orientations, many CPUs
+            # Define the chunk size
+            chunk_size = controller.get_chunk_size()
+            if chunk_size == -1:
+                chunk_size = int(np.ceil(n_oris/ncpus))
+            # Tell the user what we are doing
+            print(f'Testing {n_oris} orientations at 1 coordinate point on {ncpus} CPU.')
+            # Create chunking
+            num_chunks = int(np.ceil(n_oris/chunk_size))
+            chunks = np.arange(num_chunks)
+            starts = np.zeros(num_chunks,dtype=int)
+            stops = np.zeros(num_chunks,dtype=int)
+            for i in np.arange(num_chunks):
+                starts[i] = i*chunk_size
+                stops[i] = i*chunk_size + chunk_size
+                if stops[i] >= n_oris:
+                    stops[i] = n_oris
+            # Tell the user about the chunking
+            if num_chunks > 1:
+                print(f'Each CPU will be given {num_chunks} chunks with {chunk_size} orientations in each chunk.')
+            else:
+                print(f'Each CPU will be given 1 chunk with {chunk_size} orientations.')
+            # Initialize arrays to drop the exp_map and confidence
+            all_exp_maps = np.zeros([num_chunks,3])
+            all_confidence = np.zeros(num_chunks)
+            all_idx = np.zeros(num_chunks)
+            # Package all inputs to the distributor function
+            state = (starts,stops,experiment,image_stack,coordinates_to_test,orientation_data_to_test,0) # Refine_yes_no should be zero here, will refine once we find the best orientation
+            # Start the multiprocessing loop
+            set_multiprocessing_method(controller.multiprocessing_start_method)
+            # Start a counter for array position
+            chunk_num = 0
+            with multiprocessing_pool(ncpus,state) as pool:
+                for vals1, vals2, vals3, start, stop in pool.imap_unordered(test_many_orientations_at_single_coordinate_distributor,chunks):
+                    # Grab the data as each CPU drops it
+                    all_exp_maps[chunk_num,:] = vals1
+                    all_confidence[chunk_num] = vals2
+                    all_idx[chunk_num] = vals3
+                    # Clean up
+                    chunk_num = chunk_num + 1
+                    del vals1, vals2, start, stop
+            # Final cleanup
+            pool.close()
+            pool.join()
+            # What was the best orientation found?
+            # Find the index of the max confidence
+            idx = np.where(all_confidence == np.max(all_confidence))[0][0] # Grab just the first instance if there is a tie
+            # What is the hightest confidence orientation and what is its confidence
+            all_exp_maps = all_exp_maps[idx,:]
+            all_confidence = all_confidence[idx]
+            all_idx = all_idx[idx]
+            # Do we want to refine this?
+            if refine_yes_no == 1:
+                orientation_data_to_test = precompute_diffraction_data(experiment,controller,all_exp_maps)
+                all_exp_maps, all_confidence = test_single_orientation_at_single_coordinate(experiment,image_stack,coordinates_to_test,orientation_data_to_test,refine_yes_no=1)
+    else:
+        # =======================================================================
+        # TESTING MANY ORIENTATIONS AT MANY COORDINATES
+        # =======================================================================
+        # - If many orientations and many cooridnates, arrays of length n_coords
+        #     - The best exp_map for each coordinate (possibly refined)
+        #     - The confidence of that exp_map at that coordinate
+        #     - The index of the original exp_map within the input exp_map array
+        if n_coords >= n_oris:
+            # Fastest loop over every orientation and check it against all the coordinate points
+            if ncpus == 1:
+                # Single processor variant
+                # Tell the user what we are doing
+                print(f'Testing {n_oris} orientations at {n_coords} coordinate points on 1 CPU.')
+                # Unpack the orientation data
+                test_exp_maps, test_angles, test_rMat_ss, test_gvec_cs, test_rMat_c = orientation_data_to_test
+                # Initialize arrays to place data
+                all_exp_maps = np.zeros([n_coords,3])
+                all_confidence = np.zeros(n_coords)
+                all_idx = np.zeros(n_coords)
+                for i in np.aranage(n_oris):
+                    # Repack this orientation's data
+                    orientation_data_to_test = [test_exp_maps[i], test_angles[i], test_rMat_ss[i], test_gvec_cs[i], test_rMat_c[i]]
+                    exp_maps, confidences, start, stop = test_single_orientation_at_many_coordinates(experiment,image_stack,coordinates_to_test,orientation_data_to_test,refine_yes_no=0,start=0,stop=0) # Do not refine here
+                    # Replace any which are better than before
+                    to_replace = confidences > all_confidence
+                    all_exp_maps[to_replace,:] = exp_maps[to_replace]
+                    all_confidence[to_replace] = confidences[to_replace]
+                    all_idx[to_replace] = i
+                # We have found the best exp_map at each coordindate - refine if we wanted to
+                if refine_yes_no == 1:
+                    for i in np.aranage(n_coords):
+                        idx = all_idx[i]
+                        orientation_data_to_test = [test_exp_maps[idx], test_angles[idx], test_rMat_ss[idx], test_gvec_cs[idx], test_rMat_c[idx]]
+                        all_exp_maps[i], all_confidence[i] = test_single_orientation_at_single_coordinate(experiment,image_stack,coordinates_to_test[i,:],orientation_data_to_test,refine_yes_no=1)
+            else:
+                # Tell the user what we are doing
+                print(f'Testing {n_oris} orientations at {n_coords} coordinate points on {ncpus} CPUs.')
+                #Define the chunk size
+                chunk_size = controller.get_chunk_size()
+                if chunk_size == -1:
+                    chunk_size = int(np.ceil(n_coords/ncpus))
+                # Create chunking
+                num_chunks = int(np.ceil(n_coords/chunk_size))
+                chunks = np.arange(num_chunks)
+                starts = np.zeros(num_chunks,dtype=int)
+                stops = np.zeros(num_chunks,dtype=int)
+                for i in np.arange(num_chunks):
+                    starts[i] = i*chunk_size
+                    stops[i] = i*chunk_size + chunk_size
+                    if stops[i] >= n_coords:
+                        stops[i] = n_coords
+                # Tell the user about the chunking
+                if num_chunks > 1:
+                    print(f'Each CPU will be given {num_chunks} chunks with {chunk_size} coordinate points for each of the {n_oris} orientation.')
+                else:
+                    print(f'Each CPU will be given 1 chunk with {chunk_size} coordinate points for each of the {n_oris} orientations.')
+                # Initialize arrays to drop the exp_map and confidence
+                all_exp_maps = np.zeros([n_coords,3])
+                all_confidence = np.zeros(n_coords)
+                all_idx = np.zeros(n_coords)
+                # Unpack the orientation data
+                test_exp_maps, test_angles, test_rMat_ss, test_gvec_cs, test_rMat_c = orientation_data_to_test
+                for i in np.aranage(n_oris):
+                    exp_maps = np.zeros([n_coords,3])
+                    confidence = np.zeros(n_coords)
+                    # Repack this orientation's data
+                    orientation_data_to_test = [test_exp_maps[i], test_angles[i], test_rMat_ss[i], test_gvec_cs[i], test_rMat_c[i]]
+                    # Package all inputs to the distributor function
+                    state = (starts,stops,experiment,image_stack,coordinates_to_test,orientation_data_to_test,0) # Set refine_yes_no to zero, will refine later
+                    # Start the multiprocessing loop
+                    set_multiprocessing_method(controller.multiprocessing_start_method)
+                    with multiprocessing_pool(ncpus,state) as pool:
+                        for vals1, vals2, start, stop in pool.imap_unordered(test_single_orientation_at_many_coordinates_distributor,chunks):
+                            # Grab the data as each CPU drops it
+                            exp_maps[start:stop,:] = vals1
+                            confidence[start:stop] = vals2
+                            # Clean up
+                            del vals1, vals2, start, stop
+                    # Final cleanup
+                    pool.close()
+                    pool.join()
+                    # Replace any which are better than before
+                    to_replace = confidence > all_confidence
+                    all_exp_maps[to_replace,:] = exp_maps[to_replace]
+                    all_confidence[to_replace] = confidences[to_replace]
+                    all_idx[to_replace] = i
+                # We have found the best exp_map at each coordindate - refine if we wanted to
+                if refine_yes_no == 1:
+                    for i in np.aranage(n_coords):
+                        idx = all_idx[i]
+                        orientation_data_to_test = [test_exp_maps[idx], test_angles[idx], test_rMat_ss[idx], test_gvec_cs[idx], test_rMat_c[idx]]
+                        all_exp_maps[i], all_confidence[i] = test_single_orientation_at_single_coordinate(experiment,image_stack,coordinates_to_test[i,:],orientation_data_to_test,refine_yes_no=1)
+        else:
+            # Fastest to loop over every coordintate point and check it against all the orientations
+            if ncpus == 1:
+                # Single processor variant
+                # Tell the user what we are doing
+                print(f'Testing {n_oris} orientations at {n_coords} coordinate points on 1 CPU.')
+                # Initialize arrays to place data
+                all_exp_maps = np.zeros([n_coords,3])
+                all_confidence = np.zeros(n_coords)
+                all_idx = np.zeros(n_coords)
+                for i in np.aranage(n_coords):
+                    exp_map, confidence, idx, start, stop = test_many_orientations_at_single_coordinate(experiment,image_stack,coordinates_to_test[i,:],orientation_data_to_test,refine_yes_no=refine_yes_no,start=0,stop=0)
+                    # Replace any which are better than before
+                    all_exp_maps[i,:] = exp_map
+                    all_confidence[i] = confidence
+                    all_idx[i] = idx
+            else:
+                # Tell the user what we are doing
+                print(f'Testing {n_oris} orientations at {n_coords} coordinate points on {ncpus} CPUs.')
+                #Define the chunk size
+                chunk_size = controller.get_chunk_size()
+                if chunk_size == -1:
+                    chunk_size = int(np.ceil(n_oris/ncpus))
+                # Create chunking
+                num_chunks = int(np.ceil(n_oris/chunk_size))
+                chunks = np.arange(num_chunks)
+                starts = np.zeros(num_chunks,dtype=int)
+                stops = np.zeros(num_chunks,dtype=int)
+                for i in np.arange(num_chunks):
+                    starts[i] = i*chunk_size
+                    stops[i] = i*chunk_size + chunk_size
+                    if stops[i] >= n_oris:
+                        stops[i] = n_oris
+                # Tell the user about the chunking
+                if num_chunks > 1:
+                    print(f'Each CPU will be given {num_chunks} chunks with {chunk_size} orientations for each of the {n_coords} coordinate points.')
+                else:
+                    print(f'Each CPU will be given 1 chunk with {chunk_size} orientations for each of the {n_coords} coordinate points.')
+                # Initialize arrays to drop the exp_map and confidence
+                all_exp_maps = np.zeros([n_coords,3])
+                all_confidence = np.zeros(n_coords)
+                all_idx = np.zeros(n_coords)
+                # Unpack the orientation data
+                test_exp_maps, test_angles, test_rMat_ss, test_gvec_cs, test_rMat_c = orientation_data_to_test
+                for i in np.aranage(n_coords):
+                    exp_maps = np.zeros([num_chunks,3])
+                    confidence = np.zeros(num_chunks)
+                    idxs = np.zeros(num_chunks)
+                    # Repack this orientation's data
+                    orientation_data_to_test = [test_exp_maps[i], test_angles[i], test_rMat_ss[i], test_gvec_cs[i], test_rMat_c[i]]
+                    # Package all inputs to the distributor function
+                    state = (starts,stops,experiment,image_stack,coordinates_to_test,orientation_data_to_test,0) # Set refine_yes_no to zero, will refine later
+                    # Start the multiprocessing loop
+                    set_multiprocessing_method(controller.multiprocessing_start_method)
+                    chunk_num = 0
+                    with multiprocessing_pool(ncpus,state) as pool:
+                        for vals1, vals2, vals3, start, stop in pool.imap_unordered(test_many_orientations_at_single_coordinate_distributor,chunks):
+                            # Grab the data as each CPU drops it
+                            exp_maps[chunk_num,:] = vals1
+                            confidences[chunk_num] = vals2
+                            idxs[chunk_num] = vals3
+                            # Clean up
+                            chunk_num = chunk_num + 1
+                            del vals1, vals2, start, stop
+                    # Final cleanup
+                    pool.close()
+                    pool.join()
+                    # What was the best orientation found?
+                    # Find the index of the max confidence
+                    idx = np.where(confidences == np.max(confidences))[0][0] # Grab just the first instance if there is a tie
+                    # What is the hightest confidence orientation and what is its confidence
+                    all_exp_maps[i,:] = exp_maps[idx,:]
+                    all_confidence[i] = confidences[idx]
+                    all_idx[i] = idxs[idx]
+
+    return all_exp_maps, all_confidence, all_idx
+
+# %% ============================================================================
+# Refactored Multiprocessing Distributor Functions
+# ===============================================================================
+def precompute_diffraction_data_distributor(chunk):
+    # Where are we pulling data from within the lists?
+    starts = _mp_state[0]
+    stops = _mp_state[1]
+    return precompute_diffraction_data_of_many_orientations(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
+
+def test_single_orientation_at_many_coordinates_distributor(chunk):
+    # Where are we pulling data from within the lists?
+    starts = _mp_state[0]
+    stops = _mp_state[1]
+    return test_single_orientation_at_many_coordinates(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
+
+def test_many_orientations_at_single_coordinate_distributor(chunk):
+    # Where are we pulling data from within the lists?
+    starts = _mp_state[0]
+    stops = _mp_state[1]
+    return test_many_orientations_at_single_coordinate(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
 # %% ============================================================================
 # Some multiprocessing
 # ===============================================================================
@@ -1031,14 +1852,74 @@ def grand_loop_pool(ncpus, state):
     #           precomp,
     #           coords,
     #           experiment )
-    global _multiprocessing_start_method
+    global multiprocessing_start_method
 
     try:
-        multiprocessing.set_start_method(_multiprocessing_start_method)
+        multiprocessing.set_start_method(multiprocessing_start_method)
     except:
         print('Multiprocessing context already set')
+    if multiprocessing_start_method == 'fork':
+        # Use FORK multiprocessing.
 
-    if _multiprocessing_start_method == 'fork':
+        # All read-only data can be inherited in the process. So we "pass" it
+        # as a global that the child process will be able to see. At the end of
+        # theprocessing the global is removed.
+        global _mp_state
+        _mp_state = state
+        pool = multiprocessing.Pool(ncpus)
+        yield pool
+        del (_mp_state)
+    else:
+        # Use SPAWN multiprocessing.
+
+        # As we can not inherit process data, all the required data is
+        # serialized into a temporary directory using joblib. The
+        # multiprocessing pool will have the "worker_init" as initialization
+        # function that takes the key for the serialized data, which will be
+        # used to load the parameter memory into the spawn process (also using
+        # joblib). In theory, joblib uses memmap for arrays if they are not
+        # compressed, so no compression is used for the bigger arrays.
+        import joblib
+        tmp_dir = tempfile.mkdtemp(suffix='-nf-grand-loop')
+        try:
+            # dumb dumping doesn't seem to work very well.. do something ad-hoc
+            logging.info('Using "%s" as temporary directory.', tmp_dir)
+
+            id_exp = joblib.dump(state[-1],
+                                 os.path.join(tmp_dir,
+                                              'grand-loop-experiment.gz'),
+                                 compress=True)
+            id_state = joblib.dump(state[:-1],
+                                   os.path.join(tmp_dir, 'grand-loop-data'))
+            pool = multiprocessing.Pool(ncpus, worker_init,
+                                        (id_state[0], id_exp[0]))
+            yield pool
+        finally:
+            logging.info('Deleting "%s".', tmp_dir)
+            shutil.rmtree(tmp_dir)
+
+
+def set_multiprocessing_method(multiprocessing_start_method):
+    # Set multiprocessing method if not already done
+    if multiprocessing.get_start_method() != multiprocessing_start_method:
+        multiprocessing.set_start_method(multiprocessing_start_method)
+
+@contextlib.contextmanager
+def multiprocessing_pool(ncpus, state):
+    """function that handles the initialization of multiprocessing. It handles
+    properly the use of spawned vs forked multiprocessing. The multiprocessing
+    can be either 'fork' or 'spawn', with 'spawn' being required in non-fork
+    platforms (like Windows) and 'fork' being preferred on fork platforms due
+    to its efficiency.
+    """
+    # state = ( chunk_size,
+    #           image_stack,
+    #           angles,
+    #           precomp,
+    #           coords,
+    #           experiment )
+    
+    if multiprocessing.get_start_method() == 'fork':
         # Use FORK multiprocessing.
 
         # All read-only data can be inherited in the process. So we "pass" it
@@ -1140,113 +2021,6 @@ def gen_nf_test_grid_tomo(x_dim_pnts, z_dim_pnts, v_bnds, voxel_spacing):
     n_crds = len(test_crds)
 
     return test_crds, n_crds, Xs, Ys, Zs
-
-# %% ============================================================================
-# Image Processing
-# ===============================================================================
-# Old image dilation
-def get_dilated_image_stack(image_stack, experiment, controller,
-                            cache_file='gold_cubes_dilated.npy'):
-
-    try:
-        dilated_image_stack = np.load(cache_file, mmap_mode='r',
-                                      allow_pickle=False)
-    except Exception:
-        dilated_image_stack = dilate_image_stack(image_stack, experiment,
-                                                 controller)
-        np.save(cache_file, dilated_image_stack)
-
-    return dilated_image_stack
-# Old image dilation
-def dilate_image_stack(image_stack, experiment, controller):
-    # first, perform image dilation ===========================================
-    # perform image dilation (using scikit_image dilation)
-    subprocess = 'dilate image_stack'
-    dilation_shape = np.ones((2*experiment.row_dilation + 1,
-                              2*experiment.col_dilation + 1),
-                             dtype=np.uint8)
-    image_stack_dilated = np.empty_like(image_stack)
-    dilated = np.empty(
-        (image_stack.shape[-2], image_stack.shape[-1] << 3),
-        dtype=bool
-    )
-    n_images = len(image_stack)
-    controller.start(subprocess, n_images)
-    for i_image in range(n_images):
-        to_dilate = np.unpackbits(image_stack[i_image], axis=-1)
-        ski_dilation(to_dilate, dilation_shape,
-                     out=dilated)
-        image_stack_dilated[i_image] = np.packbits(dilated, axis=-1)
-        controller.update(i_image + 1)
-    controller.finish(subprocess)
-
-    return image_stack_dilated
-# Old darkfiled generation
-def gen_nf_dark(data_folder,img_nums,num_for_dark,nrows,ncols,dark_type='median',stem='nf_',num_digits=5,ext='.tif'):
-
-    dark_stack=np.zeros([num_for_dark,nrows,ncols])
-
-    print('Loading data for dark generation...')
-    for ii in np.arange(num_for_dark):
-        print('Image #: ' + str(ii))
-        dark_stack[ii,:,:]=imgio.imread(data_folder+'%s'%(stem)+str(img_nums[ii]).zfill(num_digits)+ext)
-        #image_stack[ii,:,:]=np.flipud(tmp_img>threshold)
-
-    if dark_type=='median':
-        print('making median...')
-        dark=np.median(dark_stack,axis=0)
-    elif dark_type=='min':
-        print('making min...')
-        dark=np.min(dark_stack,axis=0)
-
-    return dark
-# Old image cleaner
-def gen_nf_cleaned_image_stack(data_folder,img_nums,dark,nrows,ncols, \
-                               process_type='gaussian',process_args=[4.5,5], \
-                               threshold=1.5,ome_dilation_iter=1,stem='nf_', \
-                               num_digits=5,ext='.tif'):
-
-    image_stack=np.zeros([img_nums.shape[0],nrows,ncols],dtype=bool)
-
-    print('Loading and Cleaning Images...')
-
-
-    if process_type=='gaussian':
-        sigma=process_args[0]
-        size=process_args[1].astype(int) #needs to be int
-
-        for ii in np.arange(img_nums.shape[0]):
-            print('Image #: ' + str(ii))
-            tmp_img=imgio.imread(data_folder+'%s'%(stem)+str(img_nums[ii]).zfill(num_digits)+ext)-dark
-            #image procesing
-            tmp_img = filters.gaussian(tmp_img, sigma=sigma)
-
-            tmp_img = img.morphology.grey_closing(tmp_img,size=(size,size))
-
-            binary_img = img.morphology.binary_fill_holes(tmp_img>threshold)
-            image_stack[ii,:,:]=binary_img
-            plt.imshow(binary_img,interpolation='none')
-
-    else:
-
-        num_erosions=process_args[0]
-        num_dilations=process_args[1]
-
-
-        for ii in np.arange(img_nums.shape[0]):
-            print('Image #: ' + str(ii))
-            tmp_img=imgio.imread(data_folder+'%s'%(stem)+str(img_nums[ii]).zfill(num_digits)+ext)-dark
-            #image procesing
-            image_stack[ii,:,:]=img.morphology.binary_erosion(tmp_img>threshold,iterations=num_erosions)
-            image_stack[ii,:,:]=img.morphology.binary_dilation(image_stack[ii,:,:],iterations=num_dilations)
-
-
-    #%A final dilation that includes omega
-    print('Final Dilation Including Omega....')
-    image_stack=img.morphology.binary_dilation(image_stack,iterations=ome_dilation_iter)
-
-
-    return image_stack
 
 # %% ============================================================================
 # Data processors and savers
@@ -1443,6 +2217,8 @@ def gen_trial_exp_data(grain_out_file,det_file,mat_file, mat_name, max_tth, comp
     experiment.clip_vals = clip_vals
     experiment.bsp = beam_stop_parms
     experiment.mat = mats
+    experiment.misorientation_bound_rad = misorientation_bnd*np.pi/180.
+    experiment.misorientation_step_rad = misorientation_spacing*np.pi/180.
 
 
     if mis_steps ==0:
@@ -1462,7 +2238,7 @@ def process_raw_confidence(raw_confidence,vol_shape=None,id_remap=None,min_thres
         confidence_map=np.max(raw_confidence,axis=0).reshape(vol_shape)
         grain_map=np.argmax(raw_confidence,axis=0).reshape(vol_shape)
 
-    #fix grain indexing
+    #fix grain indexing # maybe fixed by below comment
     not_indexed=np.where(confidence_map<=min_thresh)
     grain_map[not_indexed] =-1
 
@@ -2182,236 +2958,6 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material,
 
 
     return final_orientations
-
-# An older grain map output which does not handle overlap or merging grain together
-def output_grain_map(data_location,data_stems,output_stem,vol_spacing,top_down=True,save_type=['npz']):
-
-    num_scans=len(data_stems)
-
-    confidence_maps=[None]*num_scans
-    grain_maps=[None]*num_scans
-    Xss=[None]*num_scans
-    Yss=[None]*num_scans
-    Zss=[None]*num_scans
-
-    if len(vol_spacing)==1:
-        vol_shifts=np.arange(0,vol_spacing[0]*num_scans+1e-12,vol_spacing[0])
-    else:
-        vol_shifts=vol_spacing
-
-
-    for ii in np.arange(num_scans):
-        print('Loading Volume %d ....'%(ii))
-        conf_data=np.load(os.path.join(data_location,data_stems[ii]+'_grain_map_data.npz'))
-
-        confidence_maps[ii]=conf_data['confidence_map']
-        grain_maps[ii]=conf_data['grain_map']
-        Xss[ii]=conf_data['Xs']
-        Yss[ii]=conf_data['Ys']
-        Zss[ii]=conf_data['Zs']
-
-    #assumes all volumes to be the same size
-    num_layers=grain_maps[0].shape[0]
-
-    total_layers=num_layers*num_scans
-
-    num_rows=grain_maps[0].shape[1]
-    num_cols=grain_maps[0].shape[2]
-
-    grain_map_stitched=np.zeros((total_layers,num_rows,num_cols))
-    confidence_stitched=np.zeros((total_layers,num_rows,num_cols))
-    Xs_stitched=np.zeros((total_layers,num_rows,num_cols))
-    Ys_stitched=np.zeros((total_layers,num_rows,num_cols))
-    Zs_stitched=np.zeros((total_layers,num_rows,num_cols))
-
-
-    for ii in np.arange(num_scans):
-        if top_down==True:
-            grain_map_stitched[((ii)*num_layers):((ii)*num_layers+num_layers),:,:]=grain_maps[num_scans-1-ii]
-            confidence_stitched[((ii)*num_layers):((ii)*num_layers+num_layers),:,:]=confidence_maps[num_scans-1-ii]
-            Xs_stitched[((ii)*num_layers):((ii)*num_layers+num_layers),:,:]=\
-                Xss[num_scans-1-ii]
-            Zs_stitched[((ii)*num_layers):((ii)*num_layers+num_layers),:,:]=\
-                Zss[num_scans-1-ii]
-            Ys_stitched[((ii)*num_layers):((ii)*num_layers+num_layers),:,:]=Yss[num_scans-1-ii]+vol_shifts[ii]
-        else:
-
-            grain_map_stitched[((ii)*num_layers):((ii)*num_layers+num_layers),:,:]=grain_maps[ii]
-            confidence_stitched[((ii)*num_layers):((ii)*num_layers+num_layers),:,:]=confidence_maps[ii]
-            Xs_stitched[((ii)*num_layers):((ii)*num_layers+num_layers),:,:]=Xss[ii]
-            Zs_stitched[((ii)*num_layers):((ii)*num_layers+num_layers),:,:]=Zss[ii]
-            Ys_stitched[((ii)*num_layers):((ii)*num_layers+num_layers),:,:]=Yss[ii]+vol_shifts[ii]
-
-    for ii in np.arange(len(save_type)):
-
-        if save_type[ii] == 'hdf5':
-
-            print('Writing HDF5 data...')
-
-            hf = h5py.File(output_stem + '_assembled.h5', 'w')
-            hf.create_dataset('grain_map', data=grain_map_stitched)
-            hf.create_dataset('confidence', data=confidence_stitched)
-            hf.create_dataset('Xs', data=Xs_stitched)
-            hf.create_dataset('Ys', data=Ys_stitched)
-            hf.create_dataset('Zs', data=Zs_stitched)
-
-        elif save_type[ii]=='npz':
-
-            print('Writing NPZ data...')
-
-            np.savez(output_stem + '_assembled.npz',\
-             grain_map=grain_map_stitched,confidence=confidence_stitched,
-             Xs=Xs_stitched,Ys=Ys_stitched,Zs=Zs_stitched)
-
-        elif save_type[ii]=='vtk':
-
-
-            print('Writing VTK data...')
-            # VTK Dump
-            Xslist=Xs_stitched[:,:,:].ravel()
-            Yslist=Ys_stitched[:,:,:].ravel()
-            Zslist=Zs_stitched[:,:,:].ravel()
-
-            grainlist=grain_map_stitched[:,:,:].ravel()
-            conflist=confidence_stitched[:,:,:].ravel()
-
-            num_pts=Xslist.shape[0]
-            num_cells=(total_layers-1)*(num_rows-1)*(num_cols-1)
-
-            f = open(os.path.join(output_stem +'_assembled.vtk'), 'w')
-
-
-            f.write('# vtk DataFile Version 3.0\n')
-            f.write('grainmap Data\n')
-            f.write('ASCII\n')
-            f.write('DATASET UNSTRUCTURED_GRID\n')
-            f.write('POINTS %d double\n' % (num_pts))
-
-            for i in np.arange(num_pts):
-                f.write('%e %e %e \n' %(Xslist[i],Yslist[i],Zslist[i]))
-
-            scale2=num_cols*num_rows
-            scale1=num_cols
-
-            f.write('CELLS %d %d\n' % (num_cells, 9*num_cells))
-            for k in np.arange(Xs_stitched.shape[0]-1):
-                for j in np.arange(Xs_stitched.shape[1]-1):
-                    for i in np.arange(Xs_stitched.shape[2]-1):
-                        base=scale2*k+scale1*j+i
-                        p1=base
-                        p2=base+1
-                        p3=base+1+scale1
-                        p4=base+scale1
-                        p5=base+scale2
-                        p6=base+scale2+1
-                        p7=base+scale2+scale1+1
-                        p8=base+scale2+scale1
-
-                        f.write('8 %d %d %d %d %d %d %d %d \n' \
-                                %(p1,p2,p3,p4,p5,p6,p7,p8))
-
-
-            f.write('CELL_TYPES %d \n' % (num_cells))
-            for i in np.arange(num_cells):
-                f.write('12 \n')
-
-            f.write('POINT_DATA %d \n' % (num_pts))
-            f.write('SCALARS grain_id int \n')
-            f.write('LOOKUP_TABLE default \n')
-            for i in np.arange(num_pts):
-                f.write('%d \n' %(grainlist[i]))
-
-            f.write('FIELD FieldData 1 \n' )
-            f.write('confidence 1 %d float \n' % (num_pts))
-            for i in np.arange(num_pts):
-                f.write('%e \n' %(conflist[i]))
-
-
-            f.close()
-
-        else:
-            print('Not a valid save option, npz, vtk, or hdf5 allowed.')
-
-    return grain_map_stitched, confidence_stitched, Xs_stitched, Ys_stitched, \
-            Zs_stitched
-
-# %% ============================================================================
-# Calibration
-# ===============================================================================
-# An old calibration routine
-def scan_detector_parm(image_stack, experiment,test_crds,controller,parm_to_opt,parm_range,slice_shape,ang='deg'):
-    #0-distance
-    #1-x center
-    #2-y center
-    #3-xtilt
-    #4-ytilt
-    #5-ztilt
-
-    parm_vector=np.arange(parm_range[0],parm_range[1]+1e-6,(parm_range[1]-parm_range[0])/parm_range[2])
-
-
-    if parm_to_opt>2 and ang=='deg':
-        parm_vector=parm_vector*np.pi/180.
-
-    multiprocessing_start_method = 'fork' if hasattr(os, 'fork') else 'spawn'
-
-    #current detector parameters, note the value for the actively optimized parameters will be ignored
-    distance=experiment.detector_params[5]#mm
-    x_cen=experiment.detector_params[3]#mm
-    y_cen=experiment.detector_params[4]#mm
-    xtilt=experiment.detector_params[0]
-    ytilt=experiment.detector_params[1]
-    ztilt=experiment.detector_params[2]
-    ome_range=copy.copy(experiment.ome_range)
-    ome_period=copy.copy(experiment.ome_period)
-    ome_edges=copy.copy(experiment.ome_edges)
-
-    num_parm_pts=len(parm_vector)
-
-    trial_data=np.zeros([num_parm_pts,slice_shape[0],slice_shape[1]])
-
-    tmp_td=copy.copy(experiment.tVec_d)
-    for jj in np.arange(num_parm_pts):
-        print('cycle %d of %d'%(jj+1,num_parm_pts))
-
-        #overwrite translation vector components
-        if parm_to_opt==0:
-            tmp_td[2]=parm_vector[jj]
-        if parm_to_opt==1:
-            tmp_td[0]=parm_vector[jj]
-        if parm_to_opt==2:
-            tmp_td[1]=parm_vector[jj]
-        if  parm_to_opt==3:
-            rMat_d_tmp=xfcapi.makeDetectorRotMat([parm_vector[jj],ytilt,ztilt])
-        elif parm_to_opt==4:
-            rMat_d_tmp=xfcapi.makeDetectorRotMat([xtilt,parm_vector[jj],ztilt])
-        elif parm_to_opt==5:
-            rMat_d_tmp=xfcapi.makeDetectorRotMat([xtilt,ytilt,parm_vector[jj]])
-        else:
-            rMat_d_tmp=xfcapi.makeDetectorRotMat([xtilt,ytilt,ztilt])
-
-        experiment.rMat_d = rMat_d_tmp
-        experiment.tVec_d = tmp_td
-
-        if parm_to_opt==6:
-
-            experiment.ome_range=[(ome_range[0][0]-parm_vector[jj],ome_range[0][1]-parm_vector[jj])]
-            experiment.ome_period=(ome_period[0]-parm_vector[jj],ome_period[1]-parm_vector[jj])
-            experiment.ome_edges=np.array(ome_edges-parm_vector[jj])
-            experiment.base[2]=experiment.ome_edges[0]
-
-            # print(experiment.ome_range)
-            # print(experiment.ome_period)
-            # print(experiment.ome_edges)
-            # print(experiment.base)
-
-        conf=test_orientations(image_stack, experiment,test_crds,controller, \
-                               multiprocessing_start_method)
-
-
-        trial_data[jj]=np.max(conf,axis=0).reshape(slice_shape)
-
-    return trial_data, parm_vector
 
 # %% ============================================================================
 # Missing Grains Utility Functions

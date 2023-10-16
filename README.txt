@@ -1,8 +1,11 @@
 NF-HEDM and Tomo for Masking README (written by seg246)
 
 General Intro:
+- how does this look as a workflow in the gui
+
     - NF-HEDM raw images are processed with raw_to_binary_nf_image_processor.py
     - Standard NF-HEDM reconstructions are completed with reconstruct_NF.py
+    - calibrator
     - Tomo reconstructions are done in CHAP then processed with process_CHAP_tomo_for_NF_mask.py
     - Missing grains in individual NF-HEDM diffraction volumes are searched for with find_missing_grains.py
     - Separate NF reconstruction from multuple diffraction volumes are merged with stitch_multiple_diffraction_volumes.py
@@ -10,7 +13,7 @@ General Intro:
 Order of Events:
     - Note that this is a suggested order of events and process.  If you have good reason, all of this process can 
         be changed.  Think critically about each step and if you are unsure why something is suggested please speak
-        with you beamline scientist.  
+        with your beamline scientist.  
     - If you don't have tomography to give NF-HEDM a mask then skip to step 5
 
     1. A detector.yml file is put together (manually) with values for tomo

@@ -68,7 +68,7 @@ import copy
 
 # Hexrd imports
 from hexrd.transforms.xfcapi import makeRotMatOfExpMap
-from hexrd.grainmap import nfutil_SEG as nfutil
+import nfutil as nfutil
 import importlib
 importlib.reload(nfutil)
 # Matplotlib
@@ -162,7 +162,7 @@ check = None
 limit = None
 generate = None
 ncpus = 128 #mp.cpu_count() - 10 #use as many CPUs as are available
-chunk_size = 500 # Don't mess with unless you know what you're doing
+chunk_size = -1 # Don't mess with unless you know what you're doing
 RAM_set = True  # if True, manually set max amount of ram
 max_RAM = 200 # only used if RAM_set is true. in GB
 
@@ -207,9 +207,9 @@ beam_stop_parms = np.array([beam_stop_y_cen, beam_stop_width])
 # Generate the experiment
 experiment, nf_to_ff_id_map = nfutil.gen_trial_exp_data(grain_out_file, det_file,
                                                         mat_file, mat_name, max_tth,
-                                                        comp_thresh, chi2_thresh, misorientation_bnd,
-                                                        misorientation_spacing,
-                                                        omega_edges_deg,beam_stop_parms)
+                                                        comp_thresh, chi2_thresh,
+                                                        omega_edges_deg,beam_stop_parms,misorientation_bnd,
+                                                        misorientation_spacing)
 
 #==============================================================================
 # %% LOAD / GENERATE TEST DATA  - NO CHANGES NEEDED
@@ -247,6 +247,34 @@ else:
     to_use = np.arange(len(test_crds_full))
 
 test_crds = test_crds_full[to_use, :]
+
+
+#==============================================================================
+# %% Testing Ground
+#==============================================================================
+importlib.reload(nfutil)
+
+#precomputed_orientation_data = nfutil.precompute_diffraction_data_of_single_orientation(experiment,experiment.exp_maps[0,:])
+#exp_map, angles, rMat_ss, gvec_cs, rMat_c = precomputed_orientation_data
+
+#precomputed_orientation_data = nfutil.precompute_diffraction_data_of_many_orientations(experiment,experiment.exp_maps)
+#exp_map, angles, rMat_ss, gvec_cs, rMat_c, start, stop = precomputed_orientation_data
+ncpus = 128
+controller = nfutil.build_controller(
+    ncpus=ncpus, chunk_size=chunk_size, check=check, generate=generate, limit=limit)
+
+precomputed_orientation_data = nfutil.precompute_diffraction_data(experiment,controller,experiment.exp_maps)
+# all_exp_maps, all_angles, all_rMat_ss, all_gvec_cs, all_rMat_c = precomputed_orientation_data
+#==============================================================================
+# %% Testing Ground 2
+#==============================================================================
+importlib.reload(nfutil)
+ncpus = 2
+controller = nfutil.build_controller(
+    ncpus=ncpus, chunk_size=chunk_size, check=check, generate=generate, limit=limit)
+
+all_exp_maps, all_confidence, all_idx = nfutil.test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_crds[0,:],refine_yes_no=0)
+
 
 #==============================================================================
 # %% RAM Splitting - NO CHANGES NEEDED
