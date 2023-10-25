@@ -55,7 +55,7 @@ NOTES:
 
 """
 # %% ==========================================================================
-# IMPORTS - NO CHANGES NEEDED
+# IMPORTS - DO NOT CHANGE
 #==============================================================================
 # General Imports
 import numpy as np
@@ -65,7 +65,7 @@ import os
 import nfutil as nfutil
 
 # %% ==========================================================================
-# USER DEFINITIONS - CAN EDIT
+# USER DEFINITIONS - CAN BE EDITED
 #==============================================================================
 # Working directory - should be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample'
 working_directory = '/nfs/chess/aux/cycles/2023-3/id3a/gustafson-1-a/reduced_data/c103-1-nf/reconstructions/1'
@@ -124,7 +124,7 @@ y_center_parameters = [0.1,1]
 z_parameters = [0.5,21]
 
 # %% ==========================================================================
-# LOAD IMAGES AND EXPERIMENT
+# LOAD IMAGES AND EXPERIMENT - DO NOT CHANGE
 #==============================================================================
 print('Loading the image stack...')
 # Load the cleaned image stack from the first script
@@ -155,10 +155,8 @@ experiment = nfutil.generate_experiment(grains_out_filepath, detector_filepath, 
 controller = nfutil.build_controller(ncpus=ncpus, chunk_size=chunk_size, check=None, generate=None, limit=None)
 
 # %% ==========================================================================
-# CALIBRATE THE TRANSLATIONS
+# CALIBRATE THE TRANSLATIONS - CAN BE EDITED
 #==============================================================================
-import importlib
-importlib.reload(nfutil)
 parameter = 3 # 0=X, 1=Y, 2=Z, 3=RX, 4=RY, 5=RZ
 start = -2 # mm for translations, degrees for rotations
 stop = 2 # mm for translations, degrees for rotations

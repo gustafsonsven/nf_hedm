@@ -5,6 +5,28 @@ Created on Tue Mar  7 16:05:28 2023
 original authors: Austin Gerlt, Simon Mason
 edited by: seg246
 """
+"""
+    A few notes:
+        - Depending on how many images you have this script can eat up a lot of RAM
+        - Be sure to double check the meta data that is being read in to ensure it 
+            is correct from the .par files and your logbook
+        - Change the intensities in the plotting cells to scale to the data you have
+        - Take time to double check that the spots you want are being binarized 
+            correctly
+        - In general, gaussian filtering is the easiest and often the most robust,
+            just be careful not to blur your images
+        - Non-local means filtering takes more time to optimize the parameters,
+            but can do a very good job of detecting the spot edges
+        - Errosion/dilation is there if the others fail
+        - It is generally suggested to dilate through omega (only one frame on 
+            either side) as this will handle any small omega differences between
+            FF and NF
+        - Removing small features may be needed for the gaussian filter as that
+            function can blur hot pixels/noise to look like a very small spot.  
+            Be very careful not to remove spots from grains which are small so 
+            it is suggested to do some quick math on how many pixels to set as 
+            the threshold in comarison to your grain size.  
+"""
 # %% ==========================================================================
 # IMPORTS - DO NOT CHANGE
 # =============================================================================
