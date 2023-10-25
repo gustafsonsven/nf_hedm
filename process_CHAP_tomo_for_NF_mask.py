@@ -29,7 +29,7 @@ from skimage.morphology import remove_small_objects
 from skimage.transform import resize
 from scipy.ndimage import binary_erosion, binary_dilation, binary_fill_holes
 import time
-from hexrd.grainmap import nfutil as nfutil
+import nfutil as nfutil
 import os
 from nexusformat.nexus import nxload,nxsetconfig
 

@@ -1334,7 +1334,7 @@ def generate_test_coordinates(cross_sectional_dim, v_bnds, voxel_spacing,
         test_crds_full, n_crds, Xs, Ys, Zs = gen_nf_test_grid(
             cross_sectional_dim, v_bnds, voxel_spacing)
         to_use = np.arange(len(test_crds_full))
-        mask = np.ones(Xs.shape)
+        mask = np.ones(Xs.shape,bool)
 
     test_coordinates = test_crds_full[to_use, :]
     return Xs, Ys, Zs, mask, test_coordinates
@@ -1483,8 +1483,8 @@ def process_raw_data(raw_confidence,raw_idx,volume_dims,mask=None,id_remap=None)
     confidence_map = np.zeros(volume_dims)
     if mask is None:
         mask = np.ones(volume_dims,bool)
-        confidence_map[mask] = raw_confidence
-
+    confidence_map[mask] = raw_confidence
+    
     # Apply remap if there is one
     if id_remap is not None:
         mapped_idx = id_remap[raw_idx]
@@ -1494,7 +1494,6 @@ def process_raw_data(raw_confidence,raw_idx,volume_dims,mask=None,id_remap=None)
     # Assign the indexing to the correct voxel
     grain_map = np.zeros(volume_dims)
     grain_map[mask] = mapped_idx
-
 
     return grain_map, confidence_map
 

@@ -15,7 +15,7 @@ NOTES:
     - The tomography mask input is a binarized array of the entire tomography volume
     - Y (vertical) calibration is only needed if your detector center was not
         placed at the center of the beam (usually the case)
-    - Z distance is around 6 mm normally (11 mm if the furnace is in)
+    - Z distance is around 6-7 mm normally (11 mm if the furnace is in)
     - X distance is the same as from your tomography reconstruction
         If you have a RAMS sample then it is usually less than 0.1 mm
     - You voxel size should not be less than your pixel size - you cannot claim such resolution
@@ -55,22 +55,17 @@ NOTES:
 
 """
 
-# %% Imports - NO CHANGES NEEDED
-#==============================================================================
+# %% ===========================================================================
+# Imports - NO CHANGES NEEDED
+# ==============================================================================
 # General Imports
 import numpy as np
 import multiprocessing as mp
 import os
-import psutil
-import copy
-from scipy.stats import norm
-import copy
 
 # Hexrd imports
-from hexrd.transforms.xfcapi import makeRotMatOfExpMap
 import nfutil as nfutil
-import importlib
-importlib.reload(nfutil)
+
 # Matplotlib
 # This is to allow interactivity of inline plots in your gui
 # the import ipywidgets as widgets line is not needed - however, you do need to run a pip install ipywidgets
@@ -84,8 +79,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 # %% ==========================================================================
-# 
-#==============================================================================
+# USER INFORMATION - CAN BE EDITED
+# =============================================================================
 # Working directory - should be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample'
 working_directory = '/nfs/chess/aux/cycles/2023-3/id3a/gustafson-1-a/reduced_data/c103-1-nf/reconstructions/1'
 
@@ -138,20 +133,12 @@ beam_stop_y_cen = 0.0  # mm, measured from the origin of the detector paramters
 beam_stop_width = 0.0  # mm, width of the beam stop vertically
 
 # Multiprocessing and RAM parameters
-ncpus = 128 #mp.cpu_count() - 10 # Use as many CPUs as are available
+ncpus = 128 # mp.cpu_count() - 10 # Use as many CPUs as are available
 chunk_size = -1 # Use -1 if you wish automatic chunk_size calculation
 
-#reconstruction with misorientation included, for many grains, this will quickly
-#make the reconstruction size unmanagable
-misorientation_bnd = 0.0  # degrees
-misorientation_spacing = 0.25  # degrees
-
-# Make beamstop
-beam_stop_parms = np.array([beam_stop_y_cen, beam_stop_width])
-
 # %% ==========================================================================
-# 
-#==============================================================================
+# LOAD IMAGES AND EXPERIMENT - DO NOT EDIT
+# =============================================================================
 print('Loading the image stack...')
 # Load the cleaned image stack from the first script
 image_stack = np.load(output_directory + os.sep + image_stem + '_binarized_images.npy')
@@ -168,31 +155,33 @@ elif num_img_to_shift < 0:
     omega_edges_deg = omega_edges_deg[:num_img_to_shift]
 print('Image stack loaded.')
 
+# Make the beamstop
+beam_stop_parms = np.array([beam_stop_y_cen, beam_stop_width])
 # Generate the experiment
 experiment = nfutil.generate_experiment(grains_out_filepath, detector_filepath, materials_filepath, material_name, 
                                         max_tth,completness_threshold, chi2_threshold,omega_edges_deg,
                                         beam_stop_parms,voxel_spacing,vertical_bounds,cross_sectional_dim=cross_sectional_dimensions)
 controller = nfutil.build_controller(ncpus=ncpus, chunk_size=chunk_size, check=None, generate=None, limit=None)
-#==============================================================================
-# %% LOAD MASK / GENERATE TEST COORDINATES  - NO CHANGES NEEDED
-#==============================================================================
+# %% ===========================================================================
+# LOAD MASK / GENERATE TEST COORDINATES  - NO CHANGES NEEDED
+# ==============================================================================
 Xs, Ys, Zs, mask, test_coordinates = nfutil.generate_test_coordinates(experiment.cross_sectional_dimensions, experiment.vertical_bounds, voxel_spacing,mask_data_file=mask_filepath,mask_vert_offset=mask_vertical_offset)
 
-#==============================================================================
-# %% PRECOMPUTE ORIENTATION DATA
-#==============================================================================
+# %% ==========================================================================
+# PRECOMPUTE ORIENTATION DATA
+# =============================================================================
 precomputed_orientation_data = nfutil.precompute_diffraction_data(experiment,controller,experiment.exp_maps)
 
-#==============================================================================
-# %% TEST ORIENTATIONS AND PROCESS OUTPUT
-#==============================================================================
+# %% ==========================================================================
+# TEST ORIENTATIONS AND PROCESS OUTPUT
+# =============================================================================
 raw_exp_maps, raw_confidence, raw_idx = nfutil.test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=0)
-grain_map, confidence_map = nfutil.process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=None,id_remap=experiment.remap)
+grain_map, confidence_map = nfutil.process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=mask,id_remap=experiment.remap)
 
-#==============================================================================
-# %% Show Images - CAN BE EDITED
-#==============================================================================
-layer_num = 12 # Which layer in Y?
+# %% ==========================================================================
+# Show Images - CAN BE EDITED
+# =============================================================================
+layer_num = 10 # Which layer in Y?
 conf_thresh = 0.0 # If set to None no threshold is used
 nfutil.plot_ori_map(grain_map, confidence_map, Xs, Zs, experiment.exp_maps, 
                     layer_num,experiment.mat[material_name],experiment.remap,conf_thresh)
@@ -201,16 +190,16 @@ nfutil.plot_ori_map(grain_map, confidence_map, Xs, Zs, experiment.exp_maps,
 print('The average confidence map value is: ' + str(np.mean(confidence_map)) +'\n'+
     'The maximum confidence map value is : ' + str(np.max(confidence_map)))
 
-#==============================================================================
-# %% SAVE PROCESSED GRAIN MAP DATA - CAN BE EDITED
-#==============================================================================
+# %% ==========================================================================
+# SAVE PROCESSED GRAIN MAP DATA - CAN BE EDITED
+# =============================================================================
 nfutil.save_nf_data(output_directory, output_stem, grain_map, confidence_map,
                     Xs, Ys, Zs, experiment.exp_maps, tomo_mask=mask, id_remap=experiment.remap,
                     save_type=['npz']) # Can be npz or hdf5
 
-#==============================================================================
-# %% SAVE PROCESSED GRAIN MAP DATA WITH IPF COLORS - CAN BE EDITED
-#==============================================================================
+# %% ==========================================================================
+# SAVE PROCESSED GRAIN MAP DATA WITH IPF COLORS - CAN BE EDITED
+# =============================================================================
 nfutil.save_nf_data_for_paraview(output_directory,output_stem,grain_map,confidence_map,Xs,Ys,Zs,
                              experiment.exp_maps,experiment.mat[material_name], tomo_mask=mask,
                              id_remap=experiment.remap)

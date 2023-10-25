@@ -59,6 +59,7 @@ NOTES:
 #==============================================================================
 # General Imports
 import numpy as np
+import multiprocessing as mp
 import os
 
 # Hexrd imports
