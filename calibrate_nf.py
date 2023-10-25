@@ -15,7 +15,7 @@ NOTES:
     - The tomography mask input is a binarized array of the entire tomography volume
     - Y (vertical) calibration is only needed if your detector center was not
         placed at the center of the beam (usually the case)
-    - Z distance is around 6 mm normally (11 mm if the furnace is in)
+    - Z distance is around 6-7 mm normally (11 mm if the furnace is in)
     - X distance is the same as from your tomography reconstruction
         If you have a RAMS sample then it is usually less than 0.1 mm
     - You voxel size should not be less than your pixel size - you cannot claim such resolution
@@ -87,7 +87,7 @@ max_tth = None  # degrees, if None is input max tth will be set by the geometry
     # If you set max_tth to 20 degrees, but you only have HKLs out to 15 degrees selected
     # then you will only use the selected HKLs out to 15 degrees
 
-# What was the stem you used during image creation via nf_multithreaded_image_processing?
+# What was the stem you used during image creation via raw_to_binary_nf_image_processor.py?
 image_stem = 'c103-1-nf_layer_1'
 num_img_to_shift = 0 # Postive moves positive omega, negative moves negative omega, must be integer (if nothing was wrong with your metadata this should be 0)
 
@@ -114,14 +114,6 @@ beam_stop_width = 0.0  # mm, width of the beam stop vertically
 # Multiprocessing and RAM parameters
 ncpus = 128 #mp.cpu_count() - 10 # Use as many CPUs as are available
 chunk_size = -1 # Use -1 if you wish automatic chunk_size calculation
-
-# Calibration paramters
-    # all units in mm
-    # the range will be +- the 1st value about the number in the detector .yml file - choose positive values
-    # the second value defines how many steps to use - odd values make this nice and clean - 1 will leave it untouched
-x_center_parameters = [0.5,21]
-y_center_parameters = [0.1,1]
-z_parameters = [0.5,21]
 
 # %% ==========================================================================
 # LOAD IMAGES AND EXPERIMENT - DO NOT CHANGE
@@ -157,9 +149,9 @@ controller = nfutil.build_controller(ncpus=ncpus, chunk_size=chunk_size, check=N
 # %% ==========================================================================
 # CALIBRATE THE TRANSLATIONS - CAN BE EDITED
 #==============================================================================
-parameter = 3 # 0=X, 1=Y, 2=Z, 3=RX, 4=RY, 5=RZ
-start = -2 # mm for translations, degrees for rotations
-stop = 2 # mm for translations, degrees for rotations
+parameter = 2 # 0=X, 1=Y, 2=Z, 3=RX, 4=RY, 5=RZ
+start = -6.75 # mm for translations, degrees for rotations
+stop = -6.55 # mm for translations, degrees for rotations
 steps = 10
 calibration_parameters = [parameter,steps,start,stop]
 experiment = nfutil.calibrate_parameter(experiment,controller,image_stack,calibration_parameters)
