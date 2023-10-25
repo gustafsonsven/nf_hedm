@@ -1224,7 +1224,6 @@ def filter_and_binarize_images(cleaned_image_stack,controller,filter_parameters)
 
     return binarized_image_stack
 
-
 # %% ============================================================================
 # MULTI-PROCESSOR DISTRIBUTOR FUNCTIONS
 # ===============================================================================
@@ -2459,11 +2458,8 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
         print('Not iterating over this variable; iterations set to zero.')
 
 # %% ============================================================================
-# METADATA READERS IMAGE PROCESSING
+# METADATA READERS AND IMAGE PROCESSING
 # ===============================================================================
-# =============================================================================
-# %% Metadata Skimmers - DO NOT EDIT
-# =============================================================================
 # Metadata skimmer function
 def skim_metadata(raw_folder, output_dict=False):
     """
@@ -2564,9 +2560,6 @@ def generate_omega_edges(meta_df,num_imgs_per_scan):
     omega_edges_deg = np.append(omes,stop[np.shape(stop)[0]-1])
     return omes, omega_edges_deg
 
-# =============================================================================
-# %% Image Processing - DO NOT EDIT
-# =============================================================================
 # Image reader
 def load_images(filenames,image_shape,image_dtype,start=0,stop=0):
     # How many images?
