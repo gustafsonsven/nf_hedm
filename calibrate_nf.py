@@ -54,135 +54,85 @@ NOTES:
         of course that gVec_c here is a column vector (tall – 3x1 in both python and matlab) as is gVec_s.
 
 """
-
-# %% Imports - NO CHANGES NEEDED
+# %% ==========================================================================
+# IMPORTS - NO CHANGES NEEDED
 #==============================================================================
 # General Imports
 import numpy as np
-import multiprocessing as mp
 import os
-import psutil
-import copy
-from scipy.stats import norm
-import copy
 
 # Hexrd imports
-from hexrd.transforms.xfcapi import makeRotMatOfExpMap
 import nfutil as nfutil
-import importlib
-importlib.reload(nfutil)
-# Matplotlib
-# This is to allow interactivity of inline plots in your gui
-# the import ipywidgets as widgets line is not needed - however, you do need to run a pip install ipywidgets
-# the import ipympl line is not needed - however, you do need to run a pip install ipympl
-#import ipywidgets as widgets
-#import ipympl 
-import matplotlib
-# The next line is formatted correctly, no matter what your IDE says
-#%matplotlib widget
-#%matplotlib inline
-import matplotlib.pyplot as plt
 
+# %% ==========================================================================
+# USER DEFINITIONS - CAN EDIT
 #==============================================================================
-# %% Paths - CAN BE EDITED
-#==============================================================================
-# Working directory
-#should be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample'
-main_dir = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/nf/2'
+# Working directory - should be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample'
+working_directory = '/nfs/chess/aux/cycles/2023-3/id3a/gustafson-1-a/reduced_data/c103-1-nf/reconstructions/1'
+
+# Where do you want to drop any output files
+output_directory = working_directory + '/output/'
+output_stem = 'c103-1-nf_layer_1' # Something relevant to your sample
+
 # Detector file (retiga, manta,...)
-det_file = main_dir + '/retiga.yml'
+detector_filepath = working_directory + '/manta.yml'
 
-#==============================================================================
-# %% Materials File - CAN BE EDITED
-#==============================================================================
 # Materials file - from HEXRDGUI (MAKE SURE YOUR HKLS ARE DEFINED CORRECTLY FOR YOUR MATERIAL)
-mat_file = main_dir + '/materials.h5'
+materials_filepath = working_directory + '/materials.h5'
 
 # Material name in materials.h5 file from HEXRGUI
-mat_name = 'ti7al'
+material_name = 'c103'
 max_tth = None  # degrees, if None is input max tth will be set by the geometry
 # NOTE: Again, make sure the HKLs are set correctly in the materials file that you loaded
     # If you set max_tth to 20 degrees, but you only have HKLs out to 15 degrees selected
     # then you will only use the selected HKLs out to 15 degrees
 
-#==============================================================================
-# %% Output information - CAN BE EDITED
-#==============================================================================
-# Where do you want to drop any output files
-output_dir = main_dir + '/output/'
 # What was the stem you used during image creation via nf_multithreaded_image_processing?
-image_stem = 'ti-13-exsitu_layer_2'
-# How do you want your outputs to be named?
-output_stem = 'ti-13-exsitu_layer_2_merged'
+image_stem = 'c103-1-nf_layer_1'
+num_img_to_shift = 0 # Postive moves positive omega, negative moves negative omega, must be integer (if nothing was wrong with your metadata this should be 0)
 
-#==============================================================================
-# %% Grains.out File - CAN BE EDITED
-#==============================================================================
-# Location of grains.out file from far field
-grain_out_file = '/nfs/chess/aux/cycles/2023-2/id3a/shanks-3731-a/reduced_data/ti-13-exsitu/ff/output/7/grains.out'
-grain_out_file = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/nf/merged_2023_09_13.out'
-
+# Grains.out information
+grains_out_filepath = '/nfs/chess/aux/cycles/2023-3/id3a/gustafson-1-a/reduced_data/c103-1-ff/output/18/grains.out'
 # Completness threshold - grains with completness GREATER than this value will be used
-comp_thresh = 0.25 # 0.5 is a good place to start
-
+completness_threshold = 0.25 # 0.5 is a good place to start
 # Chi^2 threshold - grains with Chi^2 LESS than this value will be used
-chi2_thresh = 0.005  # 0.005 is a good place to stay at unless you have good reason to change it
-
-#==============================================================================
-# %% Tomography Mask and Geometry - CAN BE EDITED
-#==============================================================================
-# Use a mask or not
-use_mask = True #True
-# Mask location, used if use_mask=True
-mask_data_file = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/tomo//coarse_tomo_mask.npz'
-# Vertical offset: this is generally the difference in y motor positions 
-# between the tomo and nf layer (tomo_motor_z-nf_motor_z), needed for registry
-mask_vert_offset = -(-0.315) # mm
+chi2_threshold = 0.005  # 0.005 is a good place to stay at unless you have good reason to change it
 
 # If no tomography is used (use_mask=False) we will generate a square test grid
 # Cross sectional to reconstruct (should be at least 20%-30% over sample width)
-cross_sectional_dim = 1.3 # dia in mm
+cross_sectional_dimensions = 1.3 # Side length of the cross sectional region to probe (mm)
 voxel_spacing = 0.005 # in mm, voxel spacing for the near field reconstruction
 
-#==============================================================================
-# %% Other details - CAN BE EDITED
-#==============================================================================
-
-# Vertical (y) reconstruction voxel bounds in mm, ALWAYS USED REGARDLESS OF TOMOGRAPHY
-# If bounds are equal, a single layer is produced
-# Suggestion: set v_bounds to cover exactly the voxel_spacing when calibrating
-v_bnds = [-0.05, 0.05] # mm 
+# Diffraction volume vertical bounds
+# NOTE: Calibration will automatically use a single layer when probing the X and Z positions and the below values for Y calibration
+vertical_bounds = [-0.06, 0.06] # mm 
 
 # Beam stop details
 beam_stop_y_cen = 0.0  # mm, measured from the origin of the detector paramters
-beam_stop_width = 0.2  # mm, width of the beam stop vertically
+beam_stop_width = 0.0  # mm, width of the beam stop vertically
 
 # Multiprocessing and RAM parameters
-check = None
-limit = None
-generate = None
-ncpus = 128 #mp.cpu_count() - 10 #use as many CPUs as are available
-chunk_size = -1 # Don't mess with unless you know what you're doing
-RAM_set = True  # if True, manually set max amount of ram
-max_RAM = 200 # only used if RAM_set is true. in GB
+ncpus = 128 #mp.cpu_count() - 10 # Use as many CPUs as are available
+chunk_size = -1 # Use -1 if you wish automatic chunk_size calculation
 
-# Command line flag (Set to True if you are running from the command line)
-# This will inhibit plotting and calibration
-command_line = False
+# Calibration paramters
+    # all units in mm
+    # the range will be +- the 1st value about the number in the detector .yml file - choose positive values
+    # the second value defines how many steps to use - odd values make this nice and clean - 1 will leave it untouched
+x_center_parameters = [0.5,21]
+y_center_parameters = [0.1,1]
+z_parameters = [0.5,21]
 
+# %% ==========================================================================
+# LOAD IMAGES AND EXPERIMENT
 #==============================================================================
-# %% Load the Images - NO CHANGES NEEDED
-#==============================================================================
-print('Loading Images.')
+print('Loading the image stack...')
 # Load the cleaned image stack from the first script
-image_stack = np.load(output_dir + os.sep + image_stem + '_binarized_images.npy')
-print('Images loaded.')
-
+image_stack = np.load(output_directory + os.sep + image_stem + '_binarized_images.npy')
 # Load the omega edges - first value is the starting ome position of first image's slew, last value is the end position of the final image's slew
-omega_edges_deg = np.load(output_dir + os.sep + image_stem + '_omega_edges_deg.npy')
+omega_edges_deg = np.load(output_directory + os.sep + image_stem + '_omega_edges_deg.npy')
 
 # Shift in omega positive or negative by X number of images
-num_img_to_shift = -2 # Postive moves positive omega, negative moves negative omega, must be integer 
 if num_img_to_shift > 0:
     # Moving positive omega so first image is not at zero, but further along
     # Using the mean omega step size - change if you need to
@@ -191,69 +141,30 @@ elif num_img_to_shift < 0:
     # For whatever reason the multiprocessor does not like negative numbers, trim the stack
     image_stack = image_stack[np.abs(num_img_to_shift):,:,:]
     omega_edges_deg = omega_edges_deg[:num_img_to_shift]
-
-
-#==============================================================================
-# %% Load the Experiment - NO CHANGES NEEDED
-#==============================================================================
-#reconstruction with misorientation included, for many grains, this will quickly
-#make the reconstruction size unmanagable
-misorientation_bnd = 0.0  # degrees
-misorientation_spacing = 0.25  # degrees
+print('Image stack loaded.')
 
 # Make beamstop
 beam_stop_parms = np.array([beam_stop_y_cen, beam_stop_width])
 
 # Generate the experiment
-experiment = nfutil.generate_experiment(grain_out_file, det_file, mat_file, mat_name, 
-                                        max_tth,comp_thresh, chi2_thresh,omega_edges_deg,
-                                        beam_stop_parms,
-                                        misorientation_bnd=misorientation_bnd,
-                                        misorientation_spacing=misorientation_spacing,
-                                        v_bnds=v_bnds,cross_sectional_dim=cross_sectional_dim,voxel_spacing=voxel_spacing)
-controller = nfutil.build_controller(
-    ncpus=ncpus, chunk_size=chunk_size, check=check, generate=generate, limit=limit)
-#==============================================================================
-# %% LOAD MASK / GENERATE TEST COORDINATES  - NO CHANGES NEEDED
-#==============================================================================
-Xs, Ys, Zs, mask, test_coordinates = nfutil.generate_test_coordinates(cross_sectional_dim, experiment.vertical_bounds, voxel_spacing,mask_data_file,mask_vert_offset)
+experiment = nfutil.generate_experiment(grains_out_filepath, detector_filepath, materials_filepath, material_name, 
+                                        max_tth,completness_threshold, chi2_threshold,omega_edges_deg,
+                                        beam_stop_parms,voxel_spacing,vertical_bounds,cross_sectional_dim=cross_sectional_dimensions)
 
-#==============================================================================
-# %% PRECOMPUTE ORIENTATION DATA
-#==============================================================================
-precomputed_orientation_data = nfutil.precompute_diffraction_data(experiment,controller,experiment.exp_maps)
+# Make the controller
+controller = nfutil.build_controller(ncpus=ncpus, chunk_size=chunk_size, check=None, generate=None, limit=None)
 
+# %% ==========================================================================
+# CALIBRATE THE TRANSLATIONS
 #==============================================================================
-# %% TEST ORIENTATIONS AND PROCESS OUTPUT
-#==============================================================================
-raw_exp_maps, raw_confidence, raw_idx = nfutil.test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=0)
-grain_map, confidence_map = nfutil.process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=mask,id_remap=experiment.remap)
+import importlib
+importlib.reload(nfutil)
+parameter = 3 # 0=X, 1=Y, 2=Z, 3=RX, 4=RY, 5=RZ
+start = -2 # mm for translations, degrees for rotations
+stop = 2 # mm for translations, degrees for rotations
+steps = 10
+calibration_parameters = [parameter,steps,start,stop]
+experiment = nfutil.calibrate_parameter(experiment,controller,image_stack,calibration_parameters)
 
-#==============================================================================
-# %% Show Images - CAN BE EDITED
-#==============================================================================
-if command_line == False:
-    layer_num = 0 # Which layer in Y?
-    conf_thresh = 0.0 # If set to None no threshold is used
-    nfutil.plot_ori_map(grain_map, confidence_map, Xs, Zs, experiment.exp_maps, 
-                        layer_num,experiment.mat[mat_name],experiment.remap,conf_thresh)
-    # Quick note - nfutil assumes that the IPF reference vector is [0 1 0]
-    # Print out the average and max confidence
-    print('The average confidence map value is: ' + str(np.mean(confidence_map)) +'\n'+
-        'The maximum confidence map value is : ' + str(np.max(confidence_map)))
 
-#==============================================================================
-# %% SAVE PROCESSED GRAIN MAP DATA - CAN BE EDITED
-#==============================================================================
-nfutil.save_nf_data(output_dir, output_stem, grain_map, confidence_map,
-                    Xs, Ys, Zs, experiment.exp_maps, tomo_mask=mask, id_remap=experiment.remap,
-                    save_type=['npz']) # Can be npz or hdf5
-
-#==============================================================================
-# %% SAVE PROCESSED GRAIN MAP DATA WITH IPF COLORS - CAN BE EDITED
-#==============================================================================
-nfutil.save_nf_data_for_paraview(output_dir,output_stem,grain_map,confidence_map,Xs,Ys,Zs,
-                             experiment.exp_maps,experiment.mat[mat_name], tomo_mask=mask,
-                             id_remap=experiment.remap)
-# Quick note - nfutil assumes that the IPF reference vector is [0 1 0]
-
+# %%

@@ -31,7 +31,7 @@ Step 6: Profit
 # ===============================================================================
 import numpy as np
 import os
-import hexrd.grainmap.nfutil_SEG as nfutil
+import nfutil as nfutil
 import importlib
 importlib.reload(nfutil) # This reloads the file if you made changes to it
 
@@ -66,7 +66,7 @@ working_dir = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-1
 # Naming of each layer to read in - these need to be in the output folders of each folder containing each layer
 # The below two variables I concatate into start + folder_id + end
 individual_nf_layer_stem_start = 'ti-13-exsitu_layer_'
-individual_nf_layer_stem_end = '_merged_grain_map_data.npz'
+individual_nf_layer_stem_end = '_with_missing_grains_grain_map_data.npz'
 folder_ids = [1,2,3,4,5,6,7,8,9,10] # Folder ids for each separate nf layer (there is an output folder within each - this works for my folder construction
 
 # You can manually make the paths below if you want!
@@ -106,8 +106,8 @@ layer_overlap = 0 # In voxels so 2 means I have two voxels worth of overlap on e
 
 # Output names
 output_dir = working_dir
-output_stem = 'merged_2023_09_14' # What do you want to call the output h5?
-merged_grains_out_name = 'no_merged_2023_09_14.out'
+output_stem = 'merged_2023_10_22' # What do you want to call the output h5?
+merged_grains_out_name = 'merged_2023_10_22.out'
 
 # Some flags
 save_h5 = 1 # If zero the funciton will only return the exp_maps, if 1 it will also save a paraview readable h5
@@ -141,7 +141,7 @@ mat = mats[mat_name]
 # Run the stitching and output an h5
 exp_maps = nfutil.stitch_nf_diffraction_volumes(output_dir,output_stem,paths,mat,
                                offsets, ori_tol=0.25, overlap=layer_overlap, save_h5=save_h5,
-                               use_mask=1,average_orientation=0,remove_small_grains_under=3,voxel_size=0.005,save_npz=1)
+                               use_mask=1,average_orientation=0,remove_small_grains_under=2,voxel_size=0.005,save_npz=1)
 print('All Done!')
 
 # %% ============================================================================

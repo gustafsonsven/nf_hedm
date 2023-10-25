@@ -1,4 +1,25 @@
-# Convert from a Nexus file (.h5) to a .npz
+
+"""
+Steps to reconstruct a tomography mask for NF
+    1. A detector.yml file is put together (manually) with values for tomo
+        - This detector file is different than the detector file for NF and only has information about the 
+            pixel size, magnification, and detector dimensions.  
+        - Start with one of the provided templates.  
+    2. A pipeline.yml file is put together (manually) with settings and file paths for tomo
+        - Start with one of the provided templates.  
+    3. CHAP tomo is run to output a Nexus file with the reconstructed tomography
+        - From the CHESS compute farm in a linux terminal run:
+            source /nfs/chess/sw/miniconda3_msnc/bin/activate
+            conda activate CHAP_tomo
+            CHAP pipeline.yml
+        - This will output a Nexus file named as dictated in the pipeline.yml file
+    4. Run process_CHAP_tomo_for_NF_mask.py with the Nexus file as an input
+        - This needs to be run in a HEXRD environment
+        - Since this code is a very visual code, run it in an IDE like vscode
+        - This will output a tomography mask of a desired voxel size for NF
+        - Choose your filepath and names carefully as they will be idential to those used in NF
+"""
+
 # %% ================================================================================
 # IMPORTS - DO NOT EDIT
 #====================================================================================
@@ -8,7 +29,7 @@ from skimage.morphology import remove_small_objects
 from skimage.transform import resize
 from scipy.ndimage import binary_erosion, binary_dilation, binary_fill_holes
 import time
-from hexrd.grainmap import nfutil_SEG as nfutil
+from hexrd.grainmap import nfutil as nfutil
 import os
 from nexusformat.nexus import nxload,nxsetconfig
 
@@ -131,9 +152,12 @@ else:
     stop = int(image_size[0]/2 + np.round(np.shape(Xs_list)[0]/2))
 cropped_data = full_array[start:stop,start:stop,:]
 
-# Plot it real quick
+# %% ================================================================================
+# PLOT THE RAW DATA - CAN BE EDITED
+#====================================================================================
+slice_num = 200
 plt.figure()
-plt.imshow(cropped_data[:,:,200])
+plt.imshow(cropped_data[:,:,slice_num])
 plt.title('Cropped Tomo Reconstruction')
 plt.ylabel('X Position (pixels)')
 plt.xlabel('Y Position (pixels)')
@@ -233,7 +257,7 @@ print("Masking is done.")
 # %% ================================================================================
 # PLOTTING - CAN BE EDITED
 #====================================================================================
-slice_num = 649
+slice_num = 200
 raw_img = cropped_data[:,:,slice_num]
 mask_img = full_mask[:,:,slice_num]
 threshold = np.max(raw_img)*scaling

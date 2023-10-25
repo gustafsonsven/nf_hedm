@@ -1,7 +1,6 @@
 """
 nf utilities 
-original author: DCP
-contributing author: SEG
+contributing authors: DCP, SEG, Austin Gerlt, Simon Mason
 """
 # %% ============================================================================
 # IMPORTS
@@ -19,11 +18,15 @@ import contextlib
 import multiprocessing
 import tempfile
 import shutil
-import socket
 import matplotlib.pyplot as plt
 import math
-from scipy import stats
-import scipy.ndimage as img
+import scipy
+import skimage
+import copy
+import glob
+import json
+import pandas as pd
+import re
 
 # HEXRD Imports
 from hexrd import constants
@@ -957,7 +960,7 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
                 if stops[i] >= n_coords:
                     stops[i] = n_coords
             # Tell the user about the chunking
-            print(f'There are {num_chunks} chunks with {chunk_size} coordinate points for each of the {n_oris} orientation.')
+            print(f'There are {num_chunks} chunks with {chunk_size} coordinate points for each of the {n_oris} orientations.')
             # Initialize arrays to drop the exp_map and confidence
             all_exp_maps = np.zeros([n_coords,3])
             all_confidence = np.zeros(n_coords)
@@ -1023,8 +1026,204 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
             pool.join()
     # How long did it take?
     t1 = timeit.default_timer()
-    print(f'All done.  Took {np.round((t1-t0)/60)} minutes.')
+    elapsed = t1-t0
+    if elapsed < 60.0:
+        print(f'Completed {n_oris*n_coords} orientation/coordinate tests in {np.round(elapsed,1)} seconds ({elapsed/n_oris/n_coords} seconds per test).')
+    else:
+        print(f'Completed {n_oris*n_coords} orientation/coordinate tests in {np.round(elapsed/60,1)} minutes ({elapsed/n_oris/n_coords} seconds per test).')
+
     return all_exp_maps, all_confidence, all_idx.astype(int)
+
+def load_all_images(filenames,controller):
+    """
+        Goal: 
+            
+        Input:
+            
+        Output:
+
+    """
+    # Start a timer
+    t0 = timeit.default_timer()
+    # How many images to load
+    n_imgs = len(filenames)
+    # How many CPUs?
+    ncpus = controller.get_process_count()
+    # Grab in formation about the files
+    quick_image = skimage.io.imread(filenames[0])
+    image_shape = np.shape(quick_image)
+    image_dtype = quick_image.dtype
+    # Single process or multi-thread?
+    if ncpus == 1:
+        # Just go ahead and load the images
+        print(f'Loading {n_imgs} images with a single CPU.')
+        raw_image_stack, start, stop = load_images(filenames,image_shape,image_dtype,0,n_imgs)
+    else:
+        # Generate the blank image stack
+        raw_image_stack = np.zeros([n_imgs,image_shape[0],image_shape[1]],image_dtype)
+        # Define the chunk size
+        chunk_size = controller.get_chunk_size()
+        if chunk_size == -1:
+            chunk_size = int(np.ceil(n_imgs/ncpus))
+        # Create chunking
+        num_chunks = int(np.ceil(n_imgs/chunk_size))
+        chunks = np.arange(num_chunks)
+        starts = np.zeros(num_chunks,dtype=int)
+        stops = np.zeros(num_chunks,dtype=int)
+        for i in np.arange(num_chunks):
+            starts[i] = i*chunk_size
+            stops[i] = i*chunk_size + chunk_size
+            if stops[i] >= n_imgs:
+                stops[i] = n_imgs
+        print(f'Loading {n_imgs} images with {ncpus} CPUs and {num_chunks} chunks of size {chunk_size}.')
+        # Package all inputs to the distributor function
+        state = (starts,stops,filenames,image_shape,image_dtype)
+        # Start the multiprocessing loop
+        set_multiprocessing_method(controller.multiprocessing_start_method)
+        with multiprocessing_pool(ncpus,state) as pool:
+            for vals1, start, stop in pool.imap_unordered(load_images_distributor,chunks):
+                # Grab the data as each CPU drops it
+                raw_image_stack[start:stop,:,:] = vals1
+                # Clean up
+                del vals1, start, stop
+
+    # How long did it take?
+    t1 = timeit.default_timer()
+    elapsed = t1-t0
+    if elapsed < 60.0:
+        print(f'Loaded {n_imgs} images in {np.round(elapsed,1)} seconds ({elapsed/n_imgs} seconds per image).')
+    else:
+        print(f'Loaded {n_imgs} images in {np.round(elapsed/60,1)} minutes ({elapsed/n_imgs} seconds per image).')
+
+    return raw_image_stack
+
+def remove_median_darkfields(raw_image_stack,controller,median_size_through_omega):
+    """
+        Goal: 
+            
+        Input:
+            
+        Output:
+
+    """
+    # Start a timer
+    t0 = timeit.default_timer()
+    # How many slices are we dealing with
+    n_slices = np.shape(raw_image_stack)[2]
+    # How many CPUs?
+    ncpus = controller.get_process_count()
+    # Single process or multi-thread?
+    if ncpus == 1:
+        # Just go ahead and load the images
+        print(f'Removing dynamic median dark from {n_slices} slices with a single CPU.')
+        cleaned_image_stack, start, stop = remove_dynamic_median(raw_image_stack,median_size_through_omega,0,n_slices)
+    else:
+        # Generate the blank image stack
+        cleaned_image_stack = np.zeros(np.shape(raw_image_stack),raw_image_stack.dtype)
+        # Define the chunk size
+        chunk_size = controller.get_chunk_size()
+        if chunk_size == -1:
+            chunk_size = int(np.ceil(n_slices/ncpus))
+        # Create chunking
+        num_chunks = int(np.ceil(n_slices/chunk_size))
+        chunks = np.arange(num_chunks)
+        starts = np.zeros(num_chunks,dtype=int)
+        stops = np.zeros(num_chunks,dtype=int)
+        for i in np.arange(num_chunks):
+            starts[i] = i*chunk_size
+            stops[i] = i*chunk_size + chunk_size
+            if stops[i] >= n_slices:
+                stops[i] = n_slices
+        print(f'Removing dynamic median dark from {n_slices} slices with {ncpus} CPUs and {num_chunks} chunks of size {chunk_size}.')
+        # Package all inputs to the distributor function
+        state = (starts,stops,raw_image_stack,median_size_through_omega)
+        # Start the multiprocessing loop
+        set_multiprocessing_method(controller.multiprocessing_start_method)
+        with multiprocessing_pool(ncpus,state) as pool:
+            for vals1, start, stop in pool.imap_unordered(remove_median_darkfield_distributor,chunks):
+                # Grab the data as each CPU drops it
+                cleaned_image_stack[:,:,start:stop] = vals1
+                # Clean up
+                del vals1, start, stop
+
+    # How long did it take?
+    t1 = timeit.default_timer()
+    elapsed = t1-t0
+    if elapsed < 60.0:
+        print(f'Removed dynamic median dark from {n_slices} slices in {np.round(elapsed,1)} seconds ({elapsed/n_slices} seconds per slice).')
+    else:
+        print(f'Removed dynamic median dark from {n_slices} slices in {np.round(elapsed/60,1)} minutes ({elapsed/n_slices} seconds per slice).')
+
+    return cleaned_image_stack
+
+def filter_and_binarize_images(cleaned_image_stack,controller,filter_parameters):
+    """
+        Goal: 
+            
+        Input:
+            
+        Output:
+
+    """
+    # Start a timer
+    t0 = timeit.default_timer()
+    # How many slices are we dealing with
+    n_images = np.shape(cleaned_image_stack)[0]
+    # How many CPUs?
+    ncpus = controller.get_process_count()
+    # Create some text
+    cleanup_text = ['Gaussian Cleanup','Errosion/Dilation Cleanup','Non-Local Means Cleanup']
+    small_objects_text = ['no Filtering of Small Objects','Filtering of Small Objects']
+    # Filter Parameters information
+        # filter_parameters[0] - if 1, remove small objects, if 0 do nothing
+        # filter_parameters[1] - what size of small objects to remove
+        # filter_parameters[2] - which cleanup to use
+        # filter_parameters[3:] - cleanup parameters
+    # Single process or multi-thread?
+    if ncpus == 1:
+        # Just go ahead and load the images
+        print(f'Cleaning {n_images} images with {cleanup_text[filter_parameters[2]]} and {small_objects_text[filter_parameters[0]]} on a single CPU.')
+        binarized_image_stack, start, stop = filter_and_binarize_image(cleaned_image_stack,filter_parameters,0,n_images)
+    else:
+        # Generate the blank image stack
+        binarized_image_stack = np.zeros(np.shape(cleaned_image_stack),bool)
+        # Define the chunk size
+        chunk_size = controller.get_chunk_size()
+        if chunk_size == -1:
+            chunk_size = int(np.ceil(n_images/ncpus))
+        # Create chunking
+        num_chunks = int(np.ceil(n_images/chunk_size))
+        chunks = np.arange(num_chunks)
+        starts = np.zeros(num_chunks,dtype=int)
+        stops = np.zeros(num_chunks,dtype=int)
+        for i in np.arange(num_chunks):
+            starts[i] = i*chunk_size
+            stops[i] = i*chunk_size + chunk_size
+            if stops[i] >= n_images:
+                stops[i] = n_images
+        print(f'Cleaning {n_images} images with {cleanup_text[filter_parameters[2]]} and {small_objects_text[filter_parameters[0]]}\n\
+              with {ncpus} CPUs and {num_chunks} chunks of size {chunk_size}')
+        # Package all inputs to the distributor function
+        state = (starts,stops,cleaned_image_stack,filter_parameters)
+        # Start the multiprocessing loop
+        set_multiprocessing_method(controller.multiprocessing_start_method)
+        with multiprocessing_pool(ncpus,state) as pool:
+            for vals1, start, stop in pool.imap_unordered(filter_and_binarize_images_distributor,chunks):
+                # Grab the data as each CPU drops it
+                binarized_image_stack[start:stop,:,:] = vals1
+                # Clean up
+                del vals1, start, stop
+
+    # How long did it take?
+    t1 = timeit.default_timer()
+    elapsed = t1-t0
+    if elapsed < 60.0:
+        print(f'Filtered {n_images} images in {np.round(elapsed,1)} seconds ({elapsed/n_images} seconds per image).')
+    else:
+        print(f'Filtered {n_images} images in {np.round(elapsed/60,1)} minutes ({elapsed/n_images} seconds per image).')
+
+    return binarized_image_stack
+
 
 # %% ============================================================================
 # MULTI-PROCESSOR DISTRIBUTOR FUNCTIONS
@@ -1040,6 +1239,24 @@ def test_many_orientations_at_many_coordinates_distributor(chunk):
     starts = _mp_state[0]
     stops = _mp_state[1]
     return test_many_orientations_at_many_coordinates(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
+
+def load_images_distributor(chunk):
+    # Where are we pulling data from within the lists?
+    starts = _mp_state[0]
+    stops = _mp_state[1]
+    return load_images(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
+
+def remove_median_darkfield_distributor(chunk):
+    # Where are we pulling data from within the lists?
+    starts = _mp_state[0]
+    stops = _mp_state[1]
+    return remove_dynamic_median(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
+
+def filter_and_binarize_images_distributor(chunk):    
+    # Where are we pulling data from within the lists?
+    starts = _mp_state[0]
+    stops = _mp_state[1]
+    return filter_and_binarize_image(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
 
 # %% ============================================================================
 # TEST GRID GENERATION FUNCTIONS
@@ -1128,8 +1345,8 @@ def generate_test_coordinates(cross_sectional_dim, v_bnds, voxel_spacing,
 # ===============================================================================
 # Generate the experiment
 def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, comp_thresh, chi2_thresh,omega_edges_deg, 
-                       beam_stop_parms, misorientation_bnd=0.0, misorientation_spacing=0.25,v_bnds = [-0.05, 0.05],
-                       cross_sectional_dim):
+                       beam_stop_parms,voxel_spacing, vertical_bounds,misorientation_bnd=0.0, misorientation_spacing=0.25,
+                       cross_sectional_dim=1.3):
     # Load the grains.out data
     ff_data=np.loadtxt(grain_out_file)
     # Tell the user what we are doing so they know
@@ -1174,8 +1391,12 @@ def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, com
     chi = instr.chi
     tVec_s = instr.tvec
     # Detector transformation parameters
-    rMat_d = panel.rmat
-    tilt_angles_xyzp = np.asarray(rotations.angles_from_rmat_xyz(rMat_d))
+
+    # Some detector tilt information
+    # xfcapi.makeRotMatOfExpMap(tilt) = xfcapi.makeDetectorRotMat(rotations.angles_from_rmat_xyz(xfcapi.makeRotMatOfExpMap(tilt))) where tilt are directly read in from the .yaml as a exp_map 
+    rMat_d = panel.rmat # Generated by xfcapi.makeRotMatOfExpMap(tilt) where tilt are directly read in from the .yaml as a exp_map 
+    tilt_angles_xyzp = np.asarray(rotations.angles_from_rmat_xyz(rMat_d)) # These are needed for xrdutil.simulateGVecs where they are converted to a rotation matrix via xfcapi.makeDetectorRotMat(detector_params[:3]) which reads in tiltAngles = [gamma_Xl, gamma_Yl, gamma_Zl] in radians
+    
     tVec_d = panel.tvec
     # Pixel information
     row_ps = panel.pixel_size_row
@@ -1251,9 +1472,9 @@ def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, com
     experiment.misorientation_bound_rad = misorientation_bnd*np.pi/180.
     experiment.misorientation_step_rad = misorientation_spacing*np.pi/180.
     experiment.remap = cut
-    experiment.vertical_bounds = v_bnds
+    experiment.vertical_bounds = vertical_bounds
     experiment.cross_sectional_dimensions = cross_sectional_dim
-    experiemnt.voxel_spacing = voxel_spacing
+    experiment.voxel_spacing = voxel_spacing
 
     return experiment
 
@@ -1261,10 +1482,9 @@ def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, com
 def process_raw_data(raw_confidence,raw_idx,volume_dims,mask=None,id_remap=None):
     # Assign the confidence to the correct voxel
     confidence_map = np.zeros(volume_dims)
-    if mask is not None:
+    if mask is None:
+        mask = np.ones(volume_dims,bool)
         confidence_map[mask] = raw_confidence
-    else:
-        confidence_map[:] = raw_confidence
 
     # Apply remap if there is one
     if id_remap is not None:
@@ -1274,10 +1494,8 @@ def process_raw_data(raw_confidence,raw_idx,volume_dims,mask=None,id_remap=None)
 
     # Assign the indexing to the correct voxel
     grain_map = np.zeros(volume_dims)
-    if mask is not None:
-        grain_map[mask] = mapped_idx
-    else:
-        grain_map[:] = mapped_idx
+    grain_map[mask] = mapped_idx
+
 
     return grain_map, confidence_map
 
@@ -1789,7 +2007,7 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material,
                         voxels_to_merge = np.isin(id_array,ids_to_merge)
 
                         # Check for connectivity
-                        labeled_array, num_features = img.label(voxels_to_merge,structure=np.ones([3,3,3]))
+                        labeled_array, num_features = scipy.ndimage.label(voxels_to_merge,structure=np.ones([3,3,3]))
                         if num_features > 1:
                             print('This grain has more at least one non-connected region.')
                             print('Only the region where the current voxel of interest resides will be labeled as this grain.')
@@ -1878,10 +2096,10 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material,
                             if working_grain_map[y,x,z] == -2:
                                 mask = np.zeros(np.shape(working_grain_map))
                                 mask[y,x,z] = 1
-                                mask = img.binary_dilation(mask,structure=np.ones([3,3,3]))
+                                mask = scipy.ndimage.binary_dilation(mask,structure=np.ones([3,3,3]))
                                 mask[mask_full == 0] = 0
                                 mask[y,x,z] = 0
-                                m,c = stats.mode(working_grain_map[mask], axis=None, keepdims=False)
+                                m,c = scipy.stats.mode(working_grain_map[mask], axis=None, keepdims=False)
                                 working_grain_map[y,x,z] = m
                 
                 print('Done Removing.')
@@ -2014,7 +2232,7 @@ def generate_low_confidence_test_coordinates(starting_reconstruction,confidence_
         # Errode all 2D blobs - will get free surface and interior blobs
         temp = np.copy(mask)
         for i in np.arange(np.shape(mask)[0]):
-            temp[i,:,:] = img.binary_erosion(mask[i,:,:])
+            temp[i,:,:] = scipy.ndimage.binary_erosion(mask[i,:,:])
         mask = temp
 
     # Find the regions of low confidence
@@ -2032,7 +2250,7 @@ def generate_low_confidence_test_coordinates(starting_reconstruction,confidence_
         sparse_mask[::2,:,:] = 0
         sparse_mask[:,::2,:] = 0
         sparse_mask[:,:,::2] = 0
-        sparse_mask = img.binary_dilation(sparse_mask,structure=np.array([[[1,0,1],[0, 0, 0],[1,0,1]],
+        sparse_mask = scipy.ndimage.binary_dilation(sparse_mask,structure=np.array([[[1,0,1],[0, 0, 0],[1,0,1]],
                                                                     [[0,0,0],[0, 1, 0],[0,0,0]],
                                                                     [[1,0,1],[0, 0, 0],[1,0,1]]]))
         print('Returning most voxels under the confidence threshold')
@@ -2104,289 +2322,363 @@ def uniform_fundamental_zone_sampling(point_group_number,average_angular_spacing
 # %% ============================================================================
 # CALIBRATION FUNCTIONS
 # ===============================================================================
-def translation_calibration(experiment,calibration_parameters,):
+def calibrate_parameter(experiment,controller,image_stack,calibration_parameters):
+    # Which parameter?
+    experiment_parameter_index = [3,4,5,0,1,2]
+    parameter_number = experiment_parameter_index[calibration_parameters[0]] # 0=X, 1=Y, 2=Z, 3=RX, 4=RY, 5=RZ
+    # How many iterations
+    iterations = calibration_parameters[1]
+    # Start and stop points
+    start = calibration_parameters[2]
+    stop = calibration_parameters[3]
+    # Variable name
+    names = ['Detector Horizontal Center (X)',
+             'Detector Vertical Center (Y)',
+             'Detector Distance (Z)',
+             'Detector X Rotation (RX)',
+             'Detector Y Rotation (RY)',
+             'Detector Z Rotation (RZ)']
+    parameter_name = names[calibration_parameters[0]]
 
-    # NOTE: If you change anything in your detector file you will need to re-run
-    # the experiment loading cell above
-
-    # Iterator will not touch the tilts, only the x,y,z translation
-
-    # Detector parameters
-    # xtilt = experiment.detector_params[0] # exponeitial map
-    # ytilt = experiment.detector_params[1] # exponential map
-    # ztilt = experiment.detector_params[2] # exponential map
-    # x_cen = experiment.detector_params[3] # mm
-    # y_cen = experiment.detector_params[4] # mm - NB if detector is centered on the beam this should not change from 0
-    # distance = experiment.detector_params[5] # mm
-
-    # Define test range - 
-        # all units in mm
-        # the range will be +- the 1st value about the number in the detector .yml file - choose positive values
-        # the second value defines how many steps to use - odd values make this nice and clean - 1 will leave it untouched
-    x_cen_values = [0.5,21]
-    y_cen_values = [0.01,1]
-    z_values = [0.5,21]
-
-    # What is the full diffraction volume height?
-    experiment.vertical_bounds = [-0.05, 0.05] # mm
-
-    # Grab original values
+    # Copy the original experiment to work with
     working_experiment = copy.deepcopy(experiment)
 
-    # Define multiprocssing
-    multiprocessing_start_method = 'fork' if hasattr(os, 'fork') else 'spawn'
+    # Precompute orientaiton information
+    precomputed_orientation_data = precompute_diffraction_data(experiment,controller,experiment.exp_maps)
 
-    # Reset test grid if we ran it already
-    test_crds_full, n_crds, Xs, Ys, Zs = gen_nf_test_grid(
-        cross_sectional_dim, experiment.vertical_bounds, voxel_spacing)
-    to_use = np.arange(len(test_crds_full))
-    test_crds = test_crds_full[to_use, :]
-
-    # Z ITERATION --------------------------------------------------------------------------------
+    # Calculate the test coordinates
+    if parameter_number == 4:
+        # Testing vertical detector translation
+        test_crds_full, n_crds, Xs, Ys, Zs = gen_nf_test_grid_vertical(experiment.cross_sectional_dimensions, [-experiment.voxel_spacing/2,experiment.voxel_spacing], experiment.voxel_spacing)
+        to_use = np.arange(len(test_crds_full))
+        test_coordinates = test_crds_full[to_use, :]
+    else:
+        # Testing any of the others
+        test_crds_full, n_crds, Xs, Ys, Zs = gen_nf_test_grid(experiment.cross_sectional_dimensions, [-experiment.voxel_spacing/2,experiment.voxel_spacing], experiment.voxel_spacing)
+        to_use = np.arange(len(test_crds_full))
+        test_coordinates = test_crds_full[to_use, :]
 
     # Check if we are iterating this variable
-    if z_values[1] != 1:
-        z_conf_to_plot = np.zeros(z_values[1])
-        i = 0
-        z_space = np.linspace(working_experiment.detector_params[5]-z_values[0],
-                            working_experiment.detector_params[5]+z_values[0],z_values[1])
-        for z in z_space:
+    if iterations > 0:
+        # Initialize
+        count = 0
+        confidence_to_plot = np.zeros(iterations)
+        parameter_space = np.linspace(start,stop,iterations)
+        # Tell the user what we are doing
+        print(f'Scanning over {parameter_name} from {start} to {stop} with {iterations} steps of {parameter_space[1]-parameter_space[0]}')
+        # Loop over the parameter space
+        for val in parameter_space:
             # Change experiment
-            print(z)
-            working_experiment.detector_params[5] = z
-            working_experiment.tVec_d[2] = z
-            working_experiment.rMat_d = makeRotMatOfExpMap(working_experiment.detector_params[0:3])
+            print(f'Testing {parameter_name} at: {val}')
+            if parameter_number > 2: 
+                # A translation - update the working_experiment
+                working_experiment.detector_params[parameter_number] = val
+                working_experiment.tVec_d[parameter_number-3] = val
+            else:
+                # A tilt - update the working_experiment
+                # For user ease, I will have the input parameters in degrees about each axis
+                # Some detector tilt information
+                # xfcapi.makeRotMatOfExpMap(tilt) = xfcapi.makeDetectorRotMat(rotations.angles_from_rmat_xyz(xfcapi.makeRotMatOfExpMap(tilt))) where tilt are directly read in from the .yaml as a exp_map
+                # Grab original rotations
+                xyzp_tilts_deg = np.multiply(rotations.angles_from_rmat_xyz(experiment.rMat_d),180.0/np.pi) # Passive (extrinsic) tilts XYZ
+                # Reset the current value of the desired tilt
+                xyzp_tilts_deg[parameter_number] = val
+                # Define new rMat_d
+                rMat_d = xfcapi.makeDetectorRotMat(np.multiply(xyzp_tilts_deg,np.pi/180.0))
+                # Update the working_experiment
+                working_experiment.rMat_d = rMat_d
+                working_experiment.detector_params[0:3] = np.multiply(xyzp_tilts_deg,np.pi/180.0)
 
-            # Define controller
-            controller = nfutil.build_controller(
-                ncpus=ncpus, chunk_size=chunk_size, check=check, generate=generate, limit=limit)
-            
-            # Define RAM groups
-            if n_groups == 0:
-                raw_confidence = nfutil.test_orientations(
-                    image_stack, working_experiment, test_crds, controller, multiprocessing_start_method)
-                del controller
-                raw_confidence_full = np.zeros(
-                    [len(working_experiment.exp_maps), len(test_crds_full)])
-                for ii in np.arange(raw_confidence_full.shape[0]):
-                    raw_confidence_full[ii, to_use] = raw_confidence[ii, :]
-            # Remap 
-            grain_map, confidence_map = nfutil.process_raw_confidence(
-            raw_confidence_full, Xs.shape, id_remap=experiment.remap, min_thresh=0.0)
+            raw_exp_maps, raw_confidence, raw_idx = test_orientations_at_coordinates(working_experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=0)
+            grain_map, confidence_map = process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=None,id_remap=experiment.remap)
             
             # Pull the sum of the confidence map
-            z_conf_to_plot[i] = np.sum(confidence_map)
-            i = i+1
+            confidence_to_plot[count] = np.sum(confidence_map)
+            count = count + 1
         
         # Where was the center found?  
         # Weighted sum - does not work great
         #a = z_space; b = z_conf_to_plot - np.min(z_conf_to_plot); b = b/np.sum(b); working_z = np.sum(np.multiply(a,b)) 
         # Take the max - It's simple but will not throw any fits if we do not have a nice curve like a fitter might
-        working_z = z_space[np.where(z_conf_to_plot == np.max(z_conf_to_plot))]
-
-        # Set working_experiment to hold the correct z_value
-        working_experiment.detector_params[5] = working_z
-        working_experiment.tVec_d[2] = working_z
+        best_val = parameter_space[np.where(confidence_to_plot == np.max(confidence_to_plot))[0]]
+        
+        # Place the value where it needs to be
+        if parameter_number > 2: 
+            # A translation - update the working_experiment
+            experiment.detector_params[parameter_number] = best_val
+            experiment.tVec_d[parameter_number-3] = best_val
+        else:
+            # Tilt
+            # For user ease, I will have the input parameters in degrees about each axis
+            # Some detector tilt information
+            # xfcapi.makeRotMatOfExpMap(tilt) = xfcapi.makeDetectorRotMat(rotations.angles_from_rmat_xyz(xfcapi.makeRotMatOfExpMap(tilt))) where tilt are directly read in from the .yaml as a exp_map
+            # Grab original rotations
+            xyzp_tilts_deg = np.multiply(rotations.angles_from_rmat_xyz(experiment.rMat_d),180.0/np.pi) # Passive (extrinsic) tilts XYZ
+            # Reset the current value of the desired tilt
+            xyzp_tilts_deg[parameter_number] = best_val
+            # Define new rMat_d
+            rMat_d = xfcapi.makeDetectorRotMat(np.multiply(xyzp_tilts_deg,np.pi/180.0))
+            # Update the working_experiment
+            experiment.rMat_d = rMat_d
+            experiment.detector_params[0:3] = np.multiply(xyzp_tilts_deg,np.pi/180.0)
 
         # Plot the detector distance curve
-        fig1 = plt.figure()
-        plt.plot(z_space,z_conf_to_plot)
-        plt.plot([working_z,working_z],[np.min(z_conf_to_plot),np.max(z_conf_to_plot)])
-        plt.title('Detector Distance Iteration ' + str(iter))
+        plt.figure()
+        plt.plot(parameter_space,confidence_to_plot)
+        plt.plot([best_val,best_val],[np.min(confidence_to_plot),np.max(confidence_to_plot)])
+        plt.title(f'{parameter_name} Confidence Curve')
         plt.show(block=False)
 
-        # Run at the updated position and plot
-        # Define controller
-        controller = nfutil.build_controller(
-            ncpus=ncpus, chunk_size=chunk_size, check=check, generate=generate, limit=limit)
-        # Define RAM groups
-        if n_groups == 0:
-            raw_confidence = nfutil.test_orientations(
-                image_stack, working_experiment, test_crds, controller, multiprocessing_start_method)
-            del controller
-            raw_confidence_full = np.zeros(
-                [len(working_experiment.exp_maps), len(test_crds_full)])
-            for ii in np.arange(raw_confidence_full.shape[0]):
-                raw_confidence_full[ii, to_use] = raw_confidence[ii, :]
-        # Remap 
-        grain_map, confidence_map = nfutil.process_raw_confidence(
-        raw_confidence_full, Xs.shape, id_remap=experiment.remap, min_thresh=0.0)
-
+        raw_exp_maps, raw_confidence, raw_idx = test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=0)
+        grain_map, confidence_map = process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=None,id_remap=experiment.remap)
 
         # Plot the new confidence map
-        fig2= plt.figure()
+        plt.figure()
         plt.imshow(confidence_map[0,:,:],clim=[0,1])
-        plt.title('Detector Distance Confidence ' + str(iter))
+        plt.title(f'Confidence Map with {parameter_name} = {best_val}')
         plt.show(block=False)
+
+        # Quick update
+        print(f'{parameter_name} found to produce highest confidence at {best_val}.\n\
+              Scanning done.  The experiment has been updated with new value.\n\
+              Update detector file if desired.')
+        yaml_vals = experiment.detector_params[0:6]
+        yaml_vals[0:3] = rotations.expMapOfQuat(rotations.quatOfRotMat(experiment.rMat_d))
+        print(f'The updated values for the .ymal are:\n\
+                  transform:\n\
+                    translation:\n\
+                    - {yaml_vals[3]}\n\
+                    - {yaml_vals[4]}\n\
+                    - {yaml_vals[5]}\n\
+                    tilt:\n\
+                    - {yaml_vals[0]}\n\
+                    - {yaml_vals[1]}\n\
+                    - {yaml_vals[2]}')
+        return experiment
     else:
-        working_z = working_experiment.detector_params[5]
+        print('Not iterating over this variable; iterations set to zero.')
 
-    # X ITERATION --------------------------------------------------------------------------------  
+# %% ============================================================================
+# METADATA READERS IMAGE PROCESSING
+# ===============================================================================
+# =============================================================================
+# %% Metadata Skimmers - DO NOT EDIT
+# =============================================================================
+# Metadata skimmer function
+def skim_metadata(raw_folder, output_dict=False):
+    """
+    skims all the .josn and .par files in a folder, and returns a concacted
+    pandas DataFrame object with duplicates removed. If Dataframe=False, will
+    return the same thing but as a dictionary of dictionaries.
+    NOTE: uses Pandas Dataframes because some data is int, some float, some
+    string. Pandas auto-parses dtypes per-column, and also has
+    dictionary-like indexing.
+    """
+    # Grab all the nf json files, assert they both exist and have par pairs
+    f_jsons = glob.glob(raw_folder + "*json")
+    assert len(f_jsons) > 0, "No .jsons found in {}".format(raw_folder)
+    f_par = [x[:-4] + "par" for x in f_jsons]
+    assert np.all([os.path.isfile(x) for x in f_par]), "missing .par files"
+    
+    # Read in headers from jsons
+    headers = [json.load(open(j, "r")).values() for j in f_jsons]
+    
+    # Read in headers from each json and data from each par as Dataframes
+    df_list = [
+        pd.read_csv(p, names=h, delim_whitespace=True, comment="#")
+        for h, p in zip(headers, f_par)
+    ]
+    
+    # Concactionate into a single dataframe and delete duplicate columns
+    meta_df_dups = pd.concat(df_list, axis=1)
+    meta_df = meta_df_dups.loc[:, ~meta_df_dups.columns.duplicated()].copy()
+    if output_dict:
+        # convert to dict of dicts if requested
+        return dict(zip(meta_df.keys(), [x[1].to_list() for x in meta_df.iteritems()]))
+    # else, just return
+    return meta_df
 
-    # Check if we are iterating this variable
-    if x_cen_values[1] != 1:
-        x_conf_to_plot = np.zeros(x_cen_values[1])
-        i = 0
-        x_space = np.linspace(working_experiment.detector_params[3]-x_cen_values[0],
-                            working_experiment.detector_params[3]+x_cen_values[0],x_cen_values[1])
-        for x in x_space:
-            # Change experiment
-            print(x)
-            working_experiment.detector_params[3] = x
-            working_experiment.tVec_d[0] = x
-            working_experiment.rMat_d = makeRotMatOfExpMap(working_experiment.detector_params[0:3])
+# Image file locations
+def skim_image_locations(meta_df, raw_folder):
+    """ takes in a dataframe generated from the metadata using "skim_metadata"
+    plus the near_field folder locations, and returns a list of image locations
+    """
+    scan = meta_df['SCAN_N'].to_numpy()
+    first = meta_df['goodstart'].to_numpy()
+    num_frames_anticipated = meta_df['nframes_real'].to_numpy()
+    num_imgs_per_scan = np.zeros(len(scan), dtype=int)
 
-            # Define controller
-            controller = nfutil.build_controller(
-                ncpus=ncpus, chunk_size=chunk_size, check=check, generate=generate, limit=limit)
+    files = []
+    flag = 0
+    for i in range(len(scan)):
+        all_files = glob.glob(raw_folder + os.sep + str(scan[i]) + "/nf/*.tif")
+        all_names = [x.split(os.sep)[-1] for x in all_files]
+        all_ids_list = [int(re.findall("([0-9]+)", x)[0]) for x in all_names]
+        all_ids = np.array(all_ids_list)
+        good_ids = (all_ids >= first[i]) * (all_ids <= first[i]+num_frames_anticipated[i]-1)
+        files.append([x for x, y in sorted(zip(all_files, good_ids)) if y])
+        if sum(good_ids) != num_frames_anticipated[i]:
+            flag = 1
+            print('There are ' + str(sum(good_ids)) + ' images in scan ' + str(scan[i]) +\
+                  ' when ' + str(num_frames_anticipated[i]) + ' were expected')
+        num_imgs_per_scan[i] = sum(good_ids)
+    
+    if flag == 1:
+        print("HEY, LISTEN!  There was an unexpected number of images within at least one scan folder.\n\
+This code will proceed with the shortened number of images and will assume that\n\
+the first image is still the 'goodstart' as defined in the par file.")
             
-            # Define RAM groups
-            if n_groups == 0:
-                raw_confidence = nfutil.test_orientations(
-                    image_stack, working_experiment, test_crds, controller, multiprocessing_start_method)
-                del controller
-                raw_confidence_full = np.zeros(
-                    [len(working_experiment.exp_maps), len(test_crds_full)])
-                for ii in np.arange(raw_confidence_full.shape[0]):
-                    raw_confidence_full[ii, to_use] = raw_confidence[ii, :]
-            # Remap 
-            grain_map, confidence_map = nfutil.process_raw_confidence(
-            raw_confidence_full, Xs.shape, id_remap=experiment.remap, min_thresh=0.0)
+    # flatten the list of lists
+    files = [item for sub in files for item in sub]
+    # sanity check
+    s_id = np.array(
+        [int(re.findall("([0-9]+)", x.split(os.sep)[-3])[0]) for x in files]
+    )
+    f_id = np.array(
+        [int(re.findall("([0-9]+)", x.split(os.sep)[-1])[0]) for x in files]
+    )
+    assert np.all(s_id[1:] - s_id[:-1] >= 0), "folders are out of order"
+    assert np.all(f_id[1:] - f_id[:-1] >= 0), "files are out of order"
 
-            # Pull the sum of the confidence map
-            x_conf_to_plot[i] = np.sum(confidence_map)
-            i = i+1
-        
-        # Where was the center found?  
-        # Weighted sum - does not work great
-        #a = x_space; b = x_conf_to_plot - np.min(x_conf_to_plot); b = b/np.sum(b); working_x = np.sum(np.multiply(a,b)) 
-        # Take the max - It's simple but will not throw any fits if we do not have a nice curve like a fitter might
-        working_x = x_space[np.where(x_conf_to_plot == np.max(x_conf_to_plot))]
+    return files, num_imgs_per_scan
 
-        # Set working_experiment to hold the correct x_value
-        working_experiment.detector_params[3] = working_x
-        working_experiment.tVec_d[0] = working_x
-        
-        # Plot the x center curve
-        fig3 = plt.figure()
-        plt.plot(x_space,x_conf_to_plot)
-        plt.plot([working_x,working_x],[np.min(x_conf_to_plot),np.max(x_conf_to_plot)])
-        plt.title('X Center Iteration ' + str(iter))
-        plt.show(block=False)
+# Omega generator function
+def generate_omega_edges(meta_df,num_imgs_per_scan):
+    """ takes in a dataframe generated from the metadata using "skim_metadata",
+    and returns a numpy array of the omega data (ie, what frames represent
+    which omega angle in the results)"""
+    start = meta_df["ome_start_real"].to_numpy() # ome_start_real is the starting omega position of the first good frame's omega slew
+    stop = meta_df["ome_end_real"].to_numpy() # ome_end_read is the final omega position of the last good frame's omega slew
+    steps = num_imgs_per_scan
+    num_frames_anticipated = meta_df['nframes_real'].to_numpy()
+    # This *should* not be needed if meta data was written correctly
+    if np.sum(num_frames_anticipated-steps) != 0:
+        print('Editing omega stop postion from the metadata to deal with fewer images')
+        print('CHECK YOUR OMEGA EDGES AND STEP SIZE WITH np.gradient(omega_edges_deg)')
+        stop = stop - (stop/num_frames_anticipated)*(num_frames_anticipated-steps)
+    scan = meta_df["SCAN_N"].to_numpy() 
+    # Find the omega start positions for each frame
+    lines = [np.linspace(a, b - (b - a) / c, c)
+             for a, b, c in zip(start, stop, steps)]
+    omes = np.hstack([x for y, x in sorted(zip(scan, lines))])
+    omega_edges_deg = np.append(omes,stop[np.shape(stop)[0]-1])
+    return omes, omega_edges_deg
 
-        # Run at the updated position and plot
-        # Define controller
-        controller = nfutil.build_controller(
-            ncpus=ncpus, chunk_size=chunk_size, check=check, generate=generate, limit=limit)
-        # Define RAM groups
-        if n_groups == 0:
-            raw_confidence = nfutil.test_orientations(
-                image_stack, working_experiment, test_crds, controller, multiprocessing_start_method)
-            del controller
-            raw_confidence_full = np.zeros(
-                [len(working_experiment.exp_maps), len(test_crds_full)])
-            for ii in np.arange(raw_confidence_full.shape[0]):
-                raw_confidence_full[ii, to_use] = raw_confidence[ii, :]
-        # Remap 
-        grain_map, confidence_map = nfutil.process_raw_confidence(
-        raw_confidence_full, Xs.shape, id_remap=experiment.remap, min_thresh=0.0)
+# =============================================================================
+# %% Image Processing - DO NOT EDIT
+# =============================================================================
+# Image reader
+def load_images(filenames,image_shape,image_dtype,start=0,stop=0):
+    # How many images?
+    n_imgs = stop - start
+    # Generate the blank image stack
+    raw_image_stack = np.zeros([n_imgs,image_shape[0],image_shape[1]],image_dtype)
+    for img in np.arange(n_imgs):
+        raw_image_stack[img,:,:] = skimage.io.imread(filenames[start+img])
+    # Return the image stack
+    return raw_image_stack, start, stop
 
-        # Plot the new confidence map
-        fig4= plt.figure()
-        plt.imshow(confidence_map[0,:,:],clim=[0,1])
-        plt.title('X Center Confidence ' + str(iter))
-        plt.show(block=False)
+# Dynamic median function
+def remove_dynamic_median(raw_image_stack,median_size_through_omega=25,start=0,stop=0):
+    # How many slices?
+    n_slices = stop - start
+    # Create a new variable with just want we need so we are not pinning raw_image_stack so much
+    cleaned_slices = np.copy(raw_image_stack[:,:,start:stop])
+    for slice in np.arange(n_slices):
+        # Grab a slice at a specific through the raw image stack (does not really matter which axis)
+        raw_slice = cleaned_slices[:, :, slice]
+        # Calculate a moving median along omega at each 
+        raw_slice_dark = scipy.ndimage.median_filter(raw_slice, size=[median_size_through_omega, 1])
+        # Update the slice and handle negatives
+        new_slice = raw_slice - raw_slice_dark
+        new_slice[raw_slice_dark>=raw_slice] = 0
+        # Place in slices
+        cleaned_slices[:,:,slice] = new_slice
+    # Return the things
+    return cleaned_slices, start, stop
+
+# Image binarization
+def filter_and_binarize_image(cleaned_image_stack,filter_parameters,start,stop):
+    # Grab a chunk of the image stack
+    working_image_stack = np.copy(cleaned_image_stack[start:stop,:,:])
+    # Create a binarized image stack
+    binarized_image_stack = np.zeros(np.shape(working_image_stack),bool)
+    # How many images?
+    n_images = np.shape(working_image_stack)[0]
+    # Filter Parameters information
+    # filter_parameters[0] - if 1, remove small objects, if 0 do nothing
+    # filter_parameters[1] - what size of small objects to remove
+    # filter_parameters[2] - which cleanup to use
+    # filter_parameters[3:] - cleanup parameters
+    # What filter are we using?
+    which_filter = filter_parameters[2]
+    if which_filter == 0:
+        # Gaussian cleanup
+        # Grab parameters
+        [sigma,threshold] = filter_parameters[3:]
+        for i in np.arange(n_images):
+            # Grab the image
+            img = working_image_stack[i, :, :]
+            # Filter
+            img = skimage.filters.gaussian(img, sigma=sigma,preserve_range=True)
+            # Threshold and put into binary stack
+            binarized_image_stack[i,:,:] = img > threshold
+    elif which_filter == 1:
+        # Errosion/dilation cleanup
+        # Grab parameters
+        [errosions,dilations,threshold] = filter_parameters[3:]
+        for i in np.arange(n_images):
+            # Grab the image
+            img = working_image_stack[i, :, :]
+            # Binarize
+            img_binary = img > threshold
+            # Errode then dilate
+            img_binary = scipy.ndimage.binary_erosion(img_binary, iterations=errosions)
+            img_binary = scipy.ndimage.binary_dilation(img_binary, iterations=dilations)
+            # Toss into binary stack
+            binarized_image_stack[i,:,:] = img_binary
+    elif which_filter == 2:
+        # Non-local means cleanup
+        # Grab parameters
+        [patch_size,patch_distance,threshold] = filter_parameters[3:]
+        for i in np.arange(n_images):
+            # Grab the image
+            img = working_image_stack[i, :, :]
+            # Estimage the per-slice sigma
+            s_est = skimage.restoration.estimate_sigma(img)
+            # Run non-local_means
+            img = skimage.restoration.denoise_nl_means(img, sigma=s_est, h=0.8 * s_est, patch_size=patch_size, patch_distance=patch_distance, preserve_range = True)
+            # Binarize and throw into new stack
+            binarized_image_stack[i,:,:] = img > threshold
+
+    # Are we removing small features?
+    remove_small_features = filter_parameters[0]
+    if remove_small_features == 1:
+        for i in np.arange(n_images):
+            binarized_image_stack[i, :, :] = skimage.morphology.remove_small_objects(binarized_image_stack[i, :, :],filter_parameters[1],connectivity=1)
+
+    # Return the things
+    return binarized_image_stack, start, stop
+
+# Dilation through omega
+def dilate_image_stack(binarized_image_stack):
+    # Start a timer
+    t0 = timeit.default_timer()
+    # Tell the user
+    print('Dilating image stack.')
+    dilated_image_stack = scipy.ndimage.binary_dilation(binarized_image_stack, iterations=1)
+    # How long did it take?
+    t1 = timeit.default_timer()
+    elapsed = t1-t0
+    if elapsed < 60.0:
+        print(f'Dilated image stack in {np.round(elapsed,1)} seconds.')
     else:
-        working_x = working_experiment.detector_params[3]
+        print(f'Dilated image stack in {np.round(elapsed/60,1)} minutes.')
 
-    # Y ITERATION --------------------------------------------------------------------------------
-    # Check if we are iterating this variable
-    if y_cen_values[1] != 1:
-        y_conf_to_plot = np.zeros(y_cen_values[1])
-        i = 0
-        y_space = np.linspace(working_experiment.detector_params[4]-y_cen_values[0],
-                            working_experiment.detector_params[4]+y_cen_values[0],y_cen_values[1])
-        
-        # Create a vertical test grid
-        test_crds_full, n_crds, Xs, Ys, Zs = nfutil.gen_nf_test_grid_vertical(
-            cross_sectional_dim, v_bnds_all, voxel_spacing)
-        to_use = np.arange(len(test_crds_full))
-        test_crds = test_crds_full[to_use, :]
-        for y in y_space:
-            # Change experiment
-            print(y)
-            working_experiment.detector_params[4] = y
-            working_experiment.tVec_d[1] = y
-            working_experiment.rMat_d = makeRotMatOfExpMap(working_experiment.detector_params[0:3])
+    # Return the thing
+    return dilated_image_stack
 
-            # Define controller
-            controller = nfutil.build_controller(
-                ncpus=ncpus, chunk_size=chunk_size, check=check, generate=generate, limit=limit)
-            
-            # Define RAM groups
-            if n_groups == 0:
-                raw_confidence = nfutil.test_orientations(
-                    image_stack, working_experiment, test_crds, controller, multiprocessing_start_method)
-                del controller
-                raw_confidence_full = np.zeros(
-                    [len(working_experiment.exp_maps), len(test_crds_full)])
-                for ii in np.arange(raw_confidence_full.shape[0]):
-                    raw_confidence_full[ii, to_use] = raw_confidence[ii, :]
-            # Remap 
-            grain_map, confidence_map = nfutil.process_raw_confidence(
-            raw_confidence_full, Xs.shape, id_remap=nf_to_ff_id_map, min_thresh=0.0)
-            
-            # Pull the sum of the confidence map
-            y_conf_to_plot[i] = np.sum(confidence_map)
-            i = i+1
-        
-        # Where was the center found?  
-        # Weighted sum - does not work great
-        #a = y_space; b = y_conf_to_plot - np.min(y_conf_to_plot); b = b/np.sum(b); working_y = np.sum(np.multiply(a,b)) 
-        # Take the max - It's simple but will not throw any fits if we do not have a nice curve like a fitter might
-        working_y = y_space[np.where(y_conf_to_plot == np.max(y_conf_to_plot))]
 
-        # Set working_experiment to hold the correct y_value
-        working_experiment.detector_params[4] = working_y
-        working_experiment.tVec_d[1] = working_y
-
-        # Plot the x center curve
-        fig5 = plt.figure()
-        plt.plot(y_space,y_conf_to_plot)
-        plt.plot([working_y,working_y],[np.min(y_conf_to_plot),np.max(y_conf_to_plot)])
-        plt.title('Y Center Iteration ' + str(iter))
-        plt.show(block=False)
-
-        # Run at the updated position and plot
-        # Define controller
-        controller = nfutil.build_controller(
-            ncpus=ncpus, chunk_size=chunk_size, check=check, generate=generate, limit=limit)
-        # Define RAM groups
-        if n_groups == 0:
-            raw_confidence = nfutil.test_orientations(
-                image_stack, working_experiment, test_crds, controller, multiprocessing_start_method)
-            del controller
-            raw_confidence_full = np.zeros(
-                [len(working_experiment.exp_maps), len(test_crds_full)])
-            for ii in np.arange(raw_confidence_full.shape[0]):
-                raw_confidence_full[ii, to_use] = raw_confidence[ii, :]
-        # Remap 
-        grain_map, confidence_map = nfutil.process_raw_confidence(
-        raw_confidence_full, Xs.shape, id_remap=nf_to_ff_id_map, min_thresh=0.0)
-
-        # Plot the new confidence map
-        fig6= plt.figure()
-        plt.imshow(confidence_map[:,:,0],clim=[0,1])
-        plt.title('Y Center Confidence ' + str(iter))
-        plt.show(block=False)
-    else:
-        working_y = working_experiment.detector_params[4]
-    # Print out our new varibles with precision of 100 nm
-    print('Thew new detector distace was found at : ' + str(np.round(working_z,4)) +'\n'+
-        'Thew new x center was found at : ' + str(np.round(working_x,4)) +'\n'+
-        'Thew new y center was found at : ' + str(np.round(working_y,4)) +'\n'+
-        'If you like these, change and save a new detector file and reload it to create a new '+
-        'experiment.  You can then reduce the search bounds for the iterator.')
 
 
 

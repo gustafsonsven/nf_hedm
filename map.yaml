@@ -1,0 +1,21 @@
+title: shanks-3731-a
+station: id3a
+experiment_type: TOMO
+sample:
+  name: ti-13-exsitu
+spec_scans:
+- spec_file: /nfs/chess/raw/2023-2/id3a/shanks-3731-a/ti-13-exsitu/spec.log
+  scan_numbers: [10]
+independent_dimensions:
+- label: rotation_angles
+  units: degrees
+  data_type: scan_column
+  name: theta
+- label: x_translation
+  units: mm
+  data_type: smb_par
+  name: ramsx
+- label: z_translation
+  units: mm
+  data_type: smb_par
+  name: ramsz

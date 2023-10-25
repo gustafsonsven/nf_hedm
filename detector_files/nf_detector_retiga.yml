@@ -14,11 +14,11 @@ detectors:
       size: [0.00148, 0.00148]
     saturation_level: 4096
     transform:
-      translation:
+      translation: # in mm, HEXRD reference frame
       - 0.0106
       - 0.0
       - -5.075
-      tilt:
+      tilt: # in radians, exponential map format, HEXRD reference frame
       - 0.0
       - 0.0
       - 0.0
