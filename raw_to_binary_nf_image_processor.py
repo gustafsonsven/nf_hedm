@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Tue Mar  7 16:05:28 2023
-original authors: Austin Gerlt, Simon Mason
-edited by: seg246
+contributing authors: dcp5303, ken38, seg246, Austin Gerlt, Simon Mason
 """
 """
     A few notes:
@@ -53,14 +51,16 @@ import matplotlib.pyplot as plt
 # USER INFORMATION - CAN BE EDITED
 # =============================================================================
 # Paths and names
-nf_raw_folder = '/nfs/chess/raw/2023-3/id3a/gustafson-1-a/c103-1-nf'
+# Raw directory - could be of the form: '/nfs/chess/raw/[cycle ID]/[beamline]/BTR/sample'
+nf_raw_folder = '/nfs/chess/raw/current/id3a/pagan-3807-a/in718ln'
 json_and_par_starter = 'id3a-rams2_nf*'
-main_dir = '/nfs/chess/aux/cycles/2023-3/id3a/gustafson-1-a/reduced_data/c103-1-nf/reconstructions/1' #working directory
-output_dir = main_dir + '/output' # Folder must exist already
-output_stem = 'c103-1-nf_layer_1'
+# Working directory - could be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample/YOUR FAVORITE BOOKKEEPING STRUCTURE'
+working_directory = '/nfs/chess/user/seg246/software/development_working_space'
+output_dir = working_directory + '/output' # Folder must exist already
+output_stem = 'test_2x_objective_with_scintillator_layer_3'
 
 # Metadata Paramters
-target_zheight = -0.05 # At what z height was this NF taken?  This defines what set of scans is grabbed from metadata.  
+target_zheight = -0.25 # At what z height was this NF taken?  This defines what set of scans is grabbed from metadata.  
 zheight_motor_name = 'ramsz' # What is the name of the z motor used?
 
 # Multiprocessing
@@ -218,35 +218,21 @@ if save_omegas_and_image_stack:
     np.save(output_dir + os.sep + output_stem + '_omega_edges_deg.npy', omega_edges_deg)
 print("Done saving")
 
+# %% ==========================================================================
+# MAKE A SCINTILATOR/BEAMSTOP MASK - DO NOT EDIT
+# =============================================================================
+num_img_for_median = 250
+binarization_threshold = 20
+errosions = 10
+dilations = 10
+feature_size_to_remove = 10000
+beamstop_mask = nfutil.make_beamstop_mask(raw_image_stack,num_img_for_median,binarization_threshold,errosions,dilations,feature_size_to_remove)
 
+plt.figure()
+plt.imshow(beamstop_mask,interpolation=None)
+plt.show()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+np.save(output_dir + os.sep + output_stem + '_beamstop_mask.npy', beamstop_mask)
 
 
 

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 original author: dcp5303
-edits made by: seg246
+contributing author: seg246
 """
 """
 NOTES:
@@ -81,12 +81,12 @@ import matplotlib.pyplot as plt
 # %% ==========================================================================
 # USER INFORMATION - CAN BE EDITED
 # =============================================================================
-# Working directory - should be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample'
-working_directory = '/nfs/chess/aux/cycles/2023-3/id3a/gustafson-1-a/reduced_data/c103-1-nf/reconstructions/1'
+# Working directory - could be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample/YOUR FAVORITE BOOKKEEPING STRUCTURE'
+working_directory = '/nfs/chess/user/seg246/software/development_working_space'
 
 # Where do you want to drop any output files
 output_directory = working_directory + '/output/'
-output_stem = 'c103-1-nf_layer_1' # Something relevant to your sample
+output_stem = 'test_2x_objective_with_scintillator' # Something relevant to your sample
 
 # Detector file (retiga, manta,...)
 detector_filepath = working_directory + '/manta.yml'
@@ -95,18 +95,18 @@ detector_filepath = working_directory + '/manta.yml'
 materials_filepath = working_directory + '/materials.h5'
 
 # Material name in materials.h5 file from HEXRGUI
-material_name = 'c103'
+material_name = 'in718'
 max_tth = None  # degrees, if None is input max tth will be set by the geometry
 # NOTE: Again, make sure the HKLs are set correctly in the materials file that you loaded
     # If you set max_tth to 20 degrees, but you only have HKLs out to 15 degrees selected
     # then you will only use the selected HKLs out to 15 degrees
 
 # What was the stem you used during image creation via nf_multithreaded_image_processing?
-image_stem = 'c103-1-nf_layer_1'
+image_stem = 'test_2x_objective_with_scintillator'
 num_img_to_shift = 0 # Postive moves positive omega, negative moves negative omega, must be integer (if nothing was wrong with your metadata this should be 0)
 
 # Grains.out information
-grains_out_filepath = '/nfs/chess/aux/cycles/2023-3/id3a/gustafson-1-a/reduced_data/c103-1-ff/output/18/grains.out'
+grains_out_filepath = '/nfs/chess/user/dcp99/Data_Processing/2023_10_29_in718_hrdic/in718ln-layer00-init/grains.out'
 # Completness threshold - grains with completness GREATER than this value will be used
 completness_threshold = 0.25 # 0.5 is a good place to start
 # Chi^2 threshold - grains with Chi^2 LESS than this value will be used
@@ -129,8 +129,9 @@ voxel_spacing = 0.005 # in mm, voxel spacing for the near field reconstruction
 vertical_bounds = [-0.06, 0.06] # mm 
 
 # Beam stop details
+use_beam_stop_mask = 1 # If 1, this will ignore the next two parameters and load the mask made by the raw_to_binary_nf_image_processor.py
 beam_stop_y_cen = 0.0  # mm, measured from the origin of the detector paramters
-beam_stop_width = 0.0  # mm, width of the beam stop vertically
+beam_stop_width = 1.0  # mm, width of the beam stop vertically
 
 # Multiprocessing and RAM parameters
 ncpus = 128 # mp.cpu_count() - 10 # Use as many CPUs as are available
@@ -144,6 +145,13 @@ print('Loading the image stack...')
 image_stack = np.load(output_directory + os.sep + image_stem + '_binarized_images.npy')
 # Load the omega edges - first value is the starting ome position of first image's slew, last value is the end position of the final image's slew
 omega_edges_deg = np.load(output_directory + os.sep + image_stem + '_omega_edges_deg.npy')
+# Load/make the beamstop where 1s indicate non-intensity-counting pixels
+if use_beam_stop_mask == 1:
+    # Load from file
+    beam_stop_parms = np.load(output_directory + os.sep + image_stem + '_beamstop_mask.npy')
+else:
+    # Generate
+    beam_stop_parms = np.array([beam_stop_y_cen, beam_stop_width])
 # Shift in omega positive or negative by X number of images
 if num_img_to_shift > 0:
     # Moving positive omega so first image is not at zero, but further along
@@ -155,8 +163,6 @@ elif num_img_to_shift < 0:
     omega_edges_deg = omega_edges_deg[:num_img_to_shift]
 print('Image stack loaded.')
 
-# Make the beamstop
-beam_stop_parms = np.array([beam_stop_y_cen, beam_stop_width])
 # Generate the experiment
 experiment = nfutil.generate_experiment(grains_out_filepath, detector_filepath, materials_filepath, material_name, 
                                         max_tth,completness_threshold, chi2_threshold,omega_edges_deg,
@@ -182,7 +188,7 @@ grain_map, confidence_map = nfutil.process_raw_data(raw_confidence,raw_idx,Xs.sh
 # Show Images - CAN BE EDITED
 # =============================================================================
 layer_num = 10 # Which layer in Y?
-conf_thresh = 0.0 # If set to None no threshold is used
+conf_thresh = 0.6 # If set to None no threshold is used
 nfutil.plot_ori_map(grain_map, confidence_map, Xs, Zs, experiment.exp_maps, 
                     layer_num,experiment.mat[material_name],experiment.remap,conf_thresh)
 # Quick note - nfutil assumes that the IPF reference vector is [0 1 0]

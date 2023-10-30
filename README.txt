@@ -10,6 +10,11 @@ General Intro:
     - Missing grains in individual NF-HEDM diffraction volumes are searched for with find_missing_grains.py
     - Separate NF reconstruction from multuple diffraction volumes are merged with stitch_multiple_diffraction_volumes.py
 
+
+ADD BOOKKEPPING STRUCTURE
+
+
+
 Order of Events:
     - Note that this is a suggested order of events and process.  If you have good reason, all of this process can 
         be changed.  Think critically about each step and if you are unsure why something is suggested please speak

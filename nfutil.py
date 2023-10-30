@@ -1,6 +1,5 @@
 """
-nf utilities 
-contributing authors: DCP, SEG, Austin Gerlt, Simon Mason
+contributing authors: dcp5303, ken38, seg246, Austin Gerlt, Simon Mason
 """
 # %% ============================================================================
 # IMPORTS
@@ -384,9 +383,10 @@ def quant_and_clip_confidence(coords, angles, image,
         yf = coords[i, 1]
 
         # does not count intensity which is covered by the beamstop dcp 5.13.21
-        if abs(yf-bsp[0]) < (bsp[1]/2.):
-            continue
-
+        # if len(bsp) == 2: # Added this flag for handling if we have a mask type beamstop - SEG 10/28/2023
+        #     if abs(yf-bsp[0]) < (bsp[1]/2.):
+        #         continue
+        
         xf = np.floor((xf - base[0]) * inv_deltas[0])
         if not xf >= 0.0:
             continue
@@ -400,6 +400,14 @@ def quant_and_clip_confidence(coords, angles, image,
         if not yf < clip_vals[1]:
             continue
         
+        # Adding 2D 'beamstop' mask functionality to handle the 2x objective lens + scinitaltor issues - SEG 10/28/2023
+        # The beamstop parameter is now the shape of a single image
+        # The beamstop mask is TRUE on the beamstop/past the edge of scintilator
+        # Comment out the top bsp function
+        # if len(bsp) > 2:
+        if bsp[int(yf), int(xf)]:
+            continue
+
         # CHANGE SEG 6/22/2023 and 10/03/2023 - Put in a binary serach of the omega edges
         ome_pos = angles[i]
         # While bisect left is nominally faster - it does not work with numba
@@ -1327,7 +1335,6 @@ def generate_test_coordinates(cross_sectional_dim, v_bnds, voxel_spacing,
         Zs = Zs_mask[in_bnds]
 
         test_crds_full = np.vstack([Xs.flatten(), Ys.flatten(), Zs.flatten()]).T
-        n_crds = len(test_crds_full)
         
         to_use = np.squeeze(np.where(mask.flatten()))
     else:
@@ -1440,6 +1447,19 @@ def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, com
          pd.tThMax = np.amax(np.radians(max_tth))
     else:
         pd.tThMax = np.amax(max_pixel_tth)
+
+    # Make the beamstop if needed
+    if len(beam_stop_parms) == 2:
+        # We need to make a mask out of the parameters
+        beam_stop_mask = np.zeros([nrows,ncols],bool)
+        # What is the middle position of the beamstop
+        middle_idx = int(np.floor(nrows/2.) + np.round(beam_stop_parms[0]/voxel_spacing))
+        # How thick is the beamstop
+        half_width = int(beam_stop_parms[1]/voxel_spacing/2)
+        # Make the beamstop all the way across the image
+        beam_stop_mask[middle_idx - half_width:middle_idx + half_width,:] = 1
+        # Set the mask
+        beam_stop_parms = beam_stop_mask
 
     # Package up the experiment
     experiment = argparse.Namespace()
@@ -1817,40 +1837,19 @@ def plot_ori_map(grain_map, confidence_map, Xs, Zs, exp_maps,
 # DIFFRACTION VOLUME STITCHERS
 # ===============================================================================
 # Stich individual diffraction volumes
-def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material, 
-                                  offsets, ori_tol=0.0, overlap=0, save_h5=0, 
-                                  use_mask=0, average_orientation=0, save_npz=0, remove_small_grains_under=0,
-                                  voxel_size=0.005):
-    '''
-    Author: seg246
-    This function stiches multiple NF diffraction volumes:
+def stitch_nf_diffraction_volumes(output_dir,output_stem,filepaths,material, 
+                                  offsets,voxel_size,overlap=0,use_mask=0,ori_tol=0.0,remove_small_grains_under=0, 
+                                  average_orientation=0, save_npz=0,save_h5=0,save_grains_out=0,suppress_plots=0):
+    """
+        Goal: 
+            
+        Input:
+            
+        Output:
 
-    Inputs:
-        paths: .npz file locations 
-            size: length number of diffraction volumes
-        offsets: separation of diffraction volumes 
-            size: length number of diffraction volumes
-            These are the motor positions, thus they are likely inverted such that offset[0] will be the,
-            top most diffraction volume; however, the actual value will be the smallest motor position
-        ori_tol: orientation tolerance to merge adjacet grains
-            size: single valued, in degrees
-        overlap: overlap of diffraction volumes
-            size: single valued, in voxels along stacking direction
-            example: if you have 10 micron overlap, and your voxel size is 5 micron, overlap=2
-    Assumptions:
-        - stacking direction will be the shortest of the three normal directions
-        - grains that should be merged, are touching voxel to voxel (no gap)
-        - merging of overlap can be done by a simple confidence check
-        - grain maps have the same dimensions
-    Outputs:
-        - .npz and .h5 (paraview readable) files containting all merged, voxeleated 
-            data: grain_map (new), confidence, X, Y, Z, grain_map (old), ramsz postion
-        - the .h5 will have orientation colors (IPF) with 010 reference orientation
-        - a grains.out file with the new, reduced, grain_ids and orientations (no other info)
-        - grain_ids have been reorded based on grain volume
-    '''
+    """
 
-    print('Loading data.')
+    print('Loading grain map data.')
     # Some data lists initialization
     exp_map_list = []
     grain_map_list = []
@@ -1863,7 +1862,7 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material,
         masks = []
     
     # Load data into lists
-    for i, p in enumerate(paths):
+    for i, p in enumerate(filepaths):
         nf_recon = np.load(p)
         grain_map_list.append(np.flip(nf_recon['grain_map'],0))
         conf_map_list.append(np.flip(nf_recon['confidence_map'],0))
@@ -1890,7 +1889,7 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material,
     if use_mask == 1:
         mask_full = np.zeros(((dims[0]-overlap*2)*num_vols,dims[1],dims[2]),dtype=np.int8)
 
-    print('Data Loaded.')
+    print('Grain map data Loaded.')
     print('Merging diffraction volumes.')
 
     # Run the merge
@@ -1954,9 +1953,8 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material,
             stop = stop + dims[0] - overlap*2
 
     print('Diffraction volumes merged.')
-    if ori_tol > 0:
-        print('Voxelating data.')
-
+    if ori_tol > 0.0:
+        print('Voxelating orientation data.')
         # Voxelate the data
         dims = np.shape(grain_map_full)
         numel = np.prod(dims)
@@ -2037,7 +2035,6 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material,
                         # Cleanup
                         print('Grain ' + str(grain) + ' identified.')
                         grain = grain + 1
-        print('Done with initial merging.')
 
         # A check
         if np.sum(np.isin(grain_map_merged,-2)) != 0:
@@ -2079,15 +2076,14 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material,
         # Remove small grains if remove_small_grains_under is greater than zero
         if remove_small_grains_under > 0:
             print('Removeing grains smaller than ' + str(remove_small_grains_under) + ' voxels')
+            print('Note that any voxels removed will only have the grain ID changed, the confidence value will not be touched')
             if use_mask == 1:
-                print('Note that any voxels removed will only have the grain ID changed, the confidence value will not be touched')
                 grain_idx_to_keep = final_sizes>=remove_small_grains_under
                 working_ids = final_ids[grain_idx_to_keep].astype(int)
                 working_oris = final_orientations[grain_idx_to_keep]
                 ids_to_remove = final_ids[~grain_idx_to_keep]
                 working_grain_map = np.copy(final_grain_map)
                 working_grain_map[working_grain_map>=ids_to_remove[0]] = -2
-                print('Removing, please hold...')
                 for y in np.arange(dims[0]):
                     for x in np.arange(dims[1]):
                         for z in np.arange(dims[2]):
@@ -2100,7 +2096,7 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material,
                                 m,c = scipy.stats.mode(working_grain_map[mask], axis=None, keepdims=False)
                                 working_grain_map[y,x,z] = m
                 
-                print('Done Removing.')
+                print('Done removing grains smaller than ' + str(remove_small_grains_under) + ' voxels')
 
                 # Quick double check
                 if np.sum(working_ids-np.unique(working_grain_map)[1:]) != 0:
@@ -2132,40 +2128,39 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material,
             else:
                 print('You are not using a mask.  A mask is needed to define sample boundaries and correctly judge grain size.')
 
-            print('Done removing grains smaller than ' + str(remove_small_grains_under) + ' voxels')
-
-        # Plot histogram of grain sizes
-        fig, axs = plt.subplots(2,2,constrained_layout=True)
-        fig.suptitle('Grain Size Statistics')
-        # Plot number of voxels in all grains
-        ax1 = axs[0,0].hist(final_sizes,25)
-        axs[0,0].title.set_text('Histogram of Grain \nSizes in Voxels')
-        axs[0,0].set_xlabel('Number of Voxels')
-        axs[0,0].set_ylabel('Frequency')
-        # Plot number of voxels of just the small grains
-        ax2 = axs[0,1].hist(final_sizes[final_sizes<10],25)
-        axs[0,1].title.set_text('Histogram of Grain \nSizes in Voxels (smaller grains)')
-        axs[0,1].set_xlabel('Number of Voxels')
-        axs[0,1].set_ylabel('Frequency')
-        # Plot equivalent grain diameters for all grains
-        ax3 = axs[1,0].hist(np.multiply(final_sizes,6/math.pi*(voxel_size*1000)**3)**(1/3),25)
-        axs[1,0].title.set_text('Histogram of Equivalent \nGrain Diameters (smaller grains)')
-        axs[1,0].set_xlabel('Equivalent Grain Diameter (microns)')
-        axs[1,0].set_ylabel('Frequency')
-        # Plot equivalent grain diameters for the small grains
-        ax4 = axs[1,1].hist(np.multiply(final_sizes[final_sizes<10],6/math.pi*(voxel_size*1000)**3)**(1/3),25)
-        axs[1,1].title.set_text('Histogram of Equivalent \nGrain Diameters (smaller grains)')
-        axs[1,1].set_xlabel('Equivalent Grain Diameter (microns)')
-        axs[1,1].set_ylabel('Frequency')
-        # Wrap up
-        plt.tight_layout()
-        plt.show()
+        if not suppress_plots:
+            # Plot histogram of grain sizes
+            fig, axs = plt.subplots(2,2,constrained_layout=True)
+            fig.suptitle('Grain Size Statistics')
+            # Plot number of voxels in all grains
+            axs[0,0].hist(final_sizes,25)
+            axs[0,0].title.set_text('Histogram of Grain \nSizes in Voxels')
+            axs[0,0].set_xlabel('Number of Voxels')
+            axs[0,0].set_ylabel('Frequency')
+            # Plot number of voxels of just the small grains
+            axs[0,1].hist(final_sizes[final_sizes<10],25)
+            axs[0,1].title.set_text('Histogram of Grain \nSizes in Voxels (smaller grains)')
+            axs[0,1].set_xlabel('Number of Voxels')
+            axs[0,1].set_ylabel('Frequency')
+            # Plot equivalent grain diameters for all grains
+            axs[1,0].hist(np.multiply(final_sizes,6/math.pi*(voxel_size*1000)**3)**(1/3),25)
+            axs[1,0].title.set_text('Histogram of Equivalent \nGrain Diameters (smaller grains)')
+            axs[1,0].set_xlabel('Equivalent Grain Diameter (microns)')
+            axs[1,0].set_ylabel('Frequency')
+            # Plot equivalent grain diameters for the small grains
+            axs[1,1].hist(np.multiply(final_sizes[final_sizes<10],6/math.pi*(voxel_size*1000)**3)**(1/3),25)
+            axs[1,1].title.set_text('Histogram of Equivalent \nGrain Diameters (smaller grains)')
+            axs[1,1].set_xlabel('Equivalent Grain Diameter (microns)')
+            axs[1,1].set_ylabel('Frequency')
+            # Wrap up
+            plt.tight_layout()
+            plt.show()
 
     else:
-        print('TODO')
+        print('Not merging or removing small grains.')
+        print('Grain IDs will be left identical to the original diffraction volumes.')
         final_grain_map = grain_map_full
         final_orientations = np.reshape(exp_map_list,(np.shape(exp_map_list)[0]*np.shape(exp_map_list)[1],np.shape(exp_map_list)[2]))
-    print('Writing Data (If save_h5 == 1).')
 
     # Currently everything is upside down
     final_grain_map = np.flip(final_grain_map,0)
@@ -2180,6 +2175,7 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material,
 
     # Save stuff
     if save_h5 == 1:
+        print('Writing h5 data...')
         if use_mask == 0:
             save_nf_data_for_paraview(output_dir,output_stem,final_grain_map,confidence_map_full,
                                             Xs_full,Ys_full,Zs_full,final_orientations,
@@ -2194,7 +2190,16 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,paths,material,
             np.savez(output_dir+output_stem+'_merged_grain_map_data.npz',grain_map=final_grain_map,confidence_map=confidence_map_full,Xs=Xs_full,Ys=Ys_full,Zs=Zs_full,ori_list=final_orientations,id_remap=np.unique(final_grain_map),tomo_mask=mask_full,diffraction_volume=diffraction_volume,vertical_position_full=vertical_position_full)
         else:
             np.savez(output_dir+output_stem+'_merged_grain_map_data.npz',grain_map=final_grain_map,confidence_map=confidence_map_full,Xs=Xs_full,Ys=Ys_full,Zs=Zs_full,ori_list=final_orientations,id_remap=np.unique(final_grain_map),diffraction_volume=diffraction_volume,vertical_position_full=vertical_position_full,tomo_mask=None)
-
+    
+    if save_grains_out == 1:
+        print('Writing grains.out data...')
+        gw = instrument.GrainDataWriter(
+            [os.path.join(output_dir, output_stem),'_grains.out']
+        )
+        for gid, ori in enumerate(final_orientations):
+            grain_params = np.hstack([ori, constants.zeros_3, constants.identity_6x1])
+            gw.dump_grain(gid, 1., 0., grain_params)
+        gw.close()
 
     return final_orientations
 
@@ -2322,8 +2327,8 @@ def uniform_fundamental_zone_sampling(point_group_number,average_angular_spacing
 # ===============================================================================
 def calibrate_parameter(experiment,controller,image_stack,calibration_parameters):
     # Which parameter?
-    experiment_parameter_index = [3,4,5,0,1,2]
-    parameter_number = experiment_parameter_index[calibration_parameters[0]] # 0=X, 1=Y, 2=Z, 3=RX, 4=RY, 5=RZ
+    experiment_parameter_index = [3,4,5,0,1,2,6]
+    parameter_number = experiment_parameter_index[calibration_parameters[0]] # 0=X, 1=Y, 2=Z, 3=RX, 4=RY, 5=RZ, 6=chi
     # How many iterations
     iterations = calibration_parameters[1]
     # Start and stop points
@@ -2335,19 +2340,17 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
              'Detector Distance (Z)',
              'Detector X Rotation (RX)',
              'Detector Y Rotation (RY)',
-             'Detector Z Rotation (RZ)']
+             'Detector Z Rotation (RZ)',
+             'Chi Angle']
     parameter_name = names[calibration_parameters[0]]
 
     # Copy the original experiment to work with
     working_experiment = copy.deepcopy(experiment)
 
-    # Precompute orientaiton information
-    precomputed_orientation_data = precompute_diffraction_data(experiment,controller,experiment.exp_maps)
-
     # Calculate the test coordinates
     if parameter_number == 4:
         # Testing vertical detector translation
-        test_crds_full, n_crds, Xs, Ys, Zs = gen_nf_test_grid_vertical(experiment.cross_sectional_dimensions, [-experiment.voxel_spacing/2,experiment.voxel_spacing], experiment.voxel_spacing)
+        test_crds_full, n_crds, Xs, Ys, Zs = gen_nf_test_grid_vertical(experiment.cross_sectional_dimensions, experiment.vertical_bounds, experiment.voxel_spacing)
         to_use = np.arange(len(test_crds_full))
         test_coordinates = test_crds_full[to_use, :]
     else:
@@ -2368,11 +2371,11 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
         for val in parameter_space:
             # Change experiment
             print(f'Testing {parameter_name} at: {val}')
-            if parameter_number > 2: 
+            if parameter_number > 2 and parameter_number < 6: 
                 # A translation - update the working_experiment
                 working_experiment.detector_params[parameter_number] = val
                 working_experiment.tVec_d[parameter_number-3] = val
-            else:
+            elif parameter_number <= 2:
                 # A tilt - update the working_experiment
                 # For user ease, I will have the input parameters in degrees about each axis
                 # Some detector tilt information
@@ -2386,7 +2389,14 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
                 # Update the working_experiment
                 working_experiment.rMat_d = rMat_d
                 working_experiment.detector_params[0:3] = np.multiply(xyzp_tilts_deg,np.pi/180.0)
+            else:
+                # Chi angle
+                working_experiment.chi = val*np.pi/180.0
+                working_experiment.detector_params[6] = val*np.pi/180.0
 
+            # Precompute orientaiton information (should need this for all, but it effects only chi?)
+            precomputed_orientation_data = precompute_diffraction_data(working_experiment,controller,experiment.exp_maps)
+            # Run the test
             raw_exp_maps, raw_confidence, raw_idx = test_orientations_at_coordinates(working_experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=0)
             grain_map, confidence_map = process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=None,id_remap=experiment.remap)
             
@@ -2401,11 +2411,11 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
         best_val = parameter_space[np.where(confidence_to_plot == np.max(confidence_to_plot))[0]]
         
         # Place the value where it needs to be
-        if parameter_number > 2: 
+        if parameter_number > 2 and parameter_number < 6: 
             # A translation - update the working_experiment
             experiment.detector_params[parameter_number] = best_val
             experiment.tVec_d[parameter_number-3] = best_val
-        else:
+        elif parameter_number <= 2:
             # Tilt
             # For user ease, I will have the input parameters in degrees about each axis
             # Some detector tilt information
@@ -2419,7 +2429,11 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
             # Update the working_experiment
             experiment.rMat_d = rMat_d
             experiment.detector_params[0:3] = np.multiply(xyzp_tilts_deg,np.pi/180.0)
-
+        else:
+            # Chi angle
+            experiment.chi = val*np.pi/180.0
+            experiment.detector_params[6] = val*np.pi/180.0
+        
         # Plot the detector distance curve
         plt.figure()
         plt.plot(parameter_space,confidence_to_plot)
@@ -2427,12 +2441,18 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
         plt.title(f'{parameter_name} Confidence Curve')
         plt.show(block=False)
 
+        # Precompute orientaiton information (should need this for all, but it effects only chi?)
+        precomputed_orientation_data = precompute_diffraction_data(experiment,controller,experiment.exp_maps)
+        # Run the test
         raw_exp_maps, raw_confidence, raw_idx = test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=0)
         grain_map, confidence_map = process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=None,id_remap=experiment.remap)
 
         # Plot the new confidence map
         plt.figure()
-        plt.imshow(confidence_map[0,:,:],clim=[0,1])
+        if parameter_number == 4:
+            plt.imshow(confidence_map[:,:,0],clim=[0,1])
+        else:
+            plt.imshow(confidence_map[0,:,:],clim=[0,1])
         plt.title(f'Confidence Map with {parameter_name} = {best_val}')
         plt.show(block=False)
 
@@ -2440,7 +2460,7 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
         print(f'{parameter_name} found to produce highest confidence at {best_val}.\n\
               Scanning done.  The experiment has been updated with new value.\n\
               Update detector file if desired.')
-        yaml_vals = experiment.detector_params[0:6]
+        yaml_vals = experiment.detector_params[0:7]
         yaml_vals[0:3] = rotations.expMapOfQuat(rotations.quatOfRotMat(experiment.rMat_d))
         print(f'The updated values for the .ymal are:\n\
                   transform:\n\
@@ -2451,7 +2471,8 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
                     tilt:\n\
                     - {yaml_vals[0]}\n\
                     - {yaml_vals[1]}\n\
-                    - {yaml_vals[2]}')
+                    - {yaml_vals[2]}\n\
+                    chi:{yaml_vals[6]}')
         return experiment
     else:
         print('Not iterating over this variable; iterations set to zero.')
@@ -2669,6 +2690,26 @@ def dilate_image_stack(binarized_image_stack):
 
     # Return the thing
     return dilated_image_stack
+
+def make_beamstop_mask(raw_image_stack,num_img_for_median,binarization_threshold,errosions,dilations,feature_size_to_remove):
+    # Grab the first image
+    short_image_stack = raw_image_stack[0:num_img_for_median,:,:]
+    # Take the median of this
+    img = np.median(short_image_stack, axis=0)
+    # Binarize
+    binary_img = img>binarization_threshold
+    # Fill holes
+    working_img = scipy.ndimage.binary_fill_holes(binary_img)
+    # Errode and dilate
+    working_img = scipy.ndimage.binary_erosion(working_img, iterations=errosions)
+    working_img = scipy.ndimage.binary_dilation(working_img, iterations=dilations)
+    # Remove any small features
+    working_img = skimage.morphology.remove_small_objects(working_img,feature_size_to_remove,connectivity=1)
+    # Invert the image
+    working_img = working_img == 0
+    # Return 
+    return working_img
+
 
 
 

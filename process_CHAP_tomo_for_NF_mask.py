@@ -1,4 +1,6 @@
-
+"""
+original author: seg246
+"""
 """
 Steps to reconstruct a tomography mask for NF
     1. A detector.yml file is put together (manually) with values for tomo
