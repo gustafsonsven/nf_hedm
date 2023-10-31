@@ -1472,9 +1472,9 @@ def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, com
         # We need to make a mask out of the parameters
         beam_stop_mask = np.zeros([nrows,ncols],bool)
         # What is the middle position of the beamstop
-        middle_idx = int(np.floor(nrows/2.) + np.round(beam_stop_parms[0]/voxel_spacing))
+        middle_idx = int(np.floor(nrows/2.) + np.round(beam_stop_parms[0]/col_ps))
         # How thick is the beamstop
-        half_width = int(beam_stop_parms[1]/voxel_spacing/2)
+        half_width = int(beam_stop_parms[1]/col_ps/2)
         # Make the beamstop all the way across the image
         beam_stop_mask[middle_idx - half_width:middle_idx + half_width,:] = 1
         # Set the mask
