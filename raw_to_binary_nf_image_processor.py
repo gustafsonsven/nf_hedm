@@ -42,9 +42,13 @@ import nfutil as nfutil
 #import ipywidgets as widgets
 #import ipympl 
 import matplotlib
-# The next line is formatted correctly, no matter what your IDE says
-# %matplotlib widget
+# The next lines are formatted correctly, no matter what your IDE says
+# For inline, interactive plots (if you use these, make sure to run a plt.close() to prevent crashing)
+%matplotlib widget
+# For inline, non-interactive plots
 # %matplotlib inline
+# For pop out, interactive plots (cannot be used with an SSH tunnel)
+# %matplotlib qt
 import matplotlib.pyplot as plt
 
 # %% ==========================================================================
@@ -123,7 +127,7 @@ omegas,omega_edges_deg = nfutil.generate_omega_edges(meta,num_imgs)
 # ==============================================================================
 # Load all of the images
 controller = nfutil.build_controller(ncpus=ncpus, chunk_size=chunk_size, check=None, generate=None, limit=None)
-raw_image_stack = nfutil.load_all_images(filenames,controller)
+raw_image_stack = nfutil.load_all_images(filenames[0:10],controller)
 
 # %% ===========================================================================
 # PLOTTING - CAN BE EDITED

@@ -73,9 +73,13 @@ import nfutil as nfutil
 #import ipywidgets as widgets
 #import ipympl 
 import matplotlib
-# The next line is formatted correctly, no matter what your IDE says
-#%matplotlib widget
-#%matplotlib inline
+# The next lines are formatted correctly, no matter what your IDE says
+# For inline, interactive plots (if you use these, make sure to run a plt.close() to prevent crashing)
+%matplotlib widget
+# For inline, non-interactive plots
+# %matplotlib inline
+# For pop out, interactive plots (cannot be used with an SSH tunnel)
+# %matplotlib qt
 import matplotlib.pyplot as plt
 
 # %% ==========================================================================
@@ -131,7 +135,7 @@ vertical_bounds = [-0.06, 0.06] # mm
 # Beam stop details
 use_beam_stop_mask = 1 # If 1, this will ignore the next two parameters and load the mask made by the raw_to_binary_nf_image_processor.py
 beam_stop_y_cen = 0.0  # mm, measured from the origin of the detector paramters
-beam_stop_width = 1.0  # mm, width of the beam stop vertically
+beam_stop_width = 0.1  # mm, width of the beam stop vertically
 
 # Multiprocessing and RAM parameters
 ncpus = 128 # mp.cpu_count() - 10 # Use as many CPUs as are available

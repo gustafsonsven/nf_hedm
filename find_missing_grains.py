@@ -48,70 +48,78 @@ from hexrd import instrument
 #import ipywidgets as widgets
 #import ipympl 
 import matplotlib
-# The next line is formatted correctly, no matter what your IDE says
-#%matplotlib widget
-#%matplotlib inline
+# The next lines are formatted correctly, no matter what your IDE says
+# For inline, interactive plots (if you use these, make sure to run a plt.close() to prevent crashing)
+%matplotlib widget
+# For inline, non-interactive plots
+# %matplotlib inline
+# For pop out, interactive plots (cannot be used with an SSH tunnel)
+# %matplotlib qt
 import matplotlib.pyplot as plt
 
-#==============================================================================
-# %% Paths - CAN BE EDITED
-#==============================================================================
-# Working directory
-# Should be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample'
-main_dir = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/nf/2'
-# Detector file (retiga, manta,...)
-det_file = main_dir + '/retiga.yml'
+# %% ==========================================================================
+# USER INFORMATION - CAN BE EDITED
+# =============================================================================
+# Working directory - could be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample/YOUR FAVORITE BOOKKEEPING STRUCTURE'
+working_directory = '/nfs/chess/user/seg246/software/development_working_space'
 
-#==============================================================================
-# %% Materials File - CAN BE EDITED
-#==============================================================================
+# Where do you want to drop any output files
+output_directory = working_directory + '/output/'
+output_stem = 'ti-13-exsitu_layer_2_with_missing_grains' # Something relevant to your sample
+
+# Detector file (retiga, manta,...)
+detector_filepath = working_directory + '/manta.yml'
+
 # Materials file - from HEXRDGUI (MAKE SURE YOUR HKLS ARE DEFINED CORRECTLY FOR YOUR MATERIAL)
-mat_file = main_dir + '/materials.h5'
+materials_filepath = working_directory + '/materials.h5'
 
 # Material name in materials.h5 file from HEXRGUI
-mat_name = 'ti7al'
+material_name = 'ti7al'
 max_tth = None  # degrees, if None is input max tth will be set by the geometry
 # NOTE: Again, make sure the HKLs are set correctly in the materials file that you loaded
     # If you set max_tth to 20 degrees, but you only have HKLs out to 15 degrees selected
     # then you will only use the selected HKLs out to 15 degrees
-
 # Point group number - Check out the nfutil for more - (Ti-alpha (Hexagonal) = 27) (Nickel (FCC) = 32)
 pt_gr_num = 27
 
-#==============================================================================
-# %% Output information - CAN BE EDITED
-#==============================================================================
-# Where do you want to drop any output files
-output_dir = main_dir + '/output/'
 # What was the stem you used during image creation via nf_multithreaded_image_processing?
 image_stem = 'ti-13-exsitu_layer_2'
-# How do you want your outputs to be named?
-output_stem = 'ti-13-exsitu_layer_2_with_missing_grains'
+num_img_to_shift = 0 # Postive moves positive omega, negative moves negative omega, must be integer (if nothing was wrong with your metadata this should be 0)
 
-#==============================================================================
-# %% Grains.out File - CAN BE EDITED
-#==============================================================================
-# Location of grains.out file from far field
-# This actually does not get used directly, but it does need to point to a grain.out
-grain_out_file = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/nf/merged_2023_09_13.out'
-
-#==============================================================================
-# %% Orginal Reconstruction - CAN BE EDITED
-#==============================================================================
-# Load in the output from the basic search
+# Where is the original grain map?
 reconstructed_data_path = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/nf/2/output/ti-13-exsitu_layer_2_grain_map_data.npz'
-starting_reconstruction = np.load(reconstructed_data_path)
+
+# Grains.out information
+grains_out_filepath = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/nf/merged_2023_09_13.out'
+# Completness threshold - grains with completness GREATER than this value will be used
+completness_threshold = 0.25 # 0.5 is a good place to start
+# Chi^2 threshold - grains with Chi^2 LESS than this value will be used
+chi2_threshold = 0.005  # 0.005 is a good place to stay at unless you have good reason to change it
+
+# Tomorgraphy mask information
+# Mask location
+mask_filepath = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/tomo/coarse_tomo_mask.npz' # If you have no mask set mask_filepath = None
+# Vertical offset: this is generally the difference in y motor positions between the tomo and nf layer (tomo_motor_z-nf_motor_z), needed for registry
+mask_vertical_offset = -(-0.315) # mm
+
+# If no tomography is used (use_mask=False) we will generate a square test grid
+# Cross sectional to reconstruct (should be at least 20%-30% over sample width)
+cross_sectional_dimensions = 1.3 # Side length of the cross sectional region to probe (mm)
+voxel_spacing = 0.005 # in mm, voxel spacing for the near field reconstruction
+
+# Vertical (y) reconstruction voxel bounds in mm, ALWAYS USED REGARDLESS OF TOMOGRAPHY
+# If bounds are equal, a single layer is produced
+# Suggestion: set v_bounds to cover exactly the voxel_spacing when calibrating
+vertical_bounds = [-0.06, 0.06] # mm 
 
 # Beam stop details
+use_beam_stop_mask = 0 # If 1, this will ignore the next two parameters and load the mask made by the raw_to_binary_nf_image_processor.py
 beam_stop_y_cen = 0.0  # mm, measured from the origin of the detector paramters
-beam_stop_width = 0.2  # mm, width of the beam stop vertically
+beam_stop_width = 0.0  # mm, width of the beam stop vertically
 
-#==============================================================================
-# %% Grain Serach details - CAN BE EDITED
-#==============================================================================
-# Multiprocessing
-ncpus = 128 #mp.cpu_count() - 10 # use as many CPUs as are available
-chunk_size = -1 # -1 will use np.ceil(num_operations/ncpus)
+# Multiprocessing and RAM parameters
+ncpus = 128 # mp.cpu_count() - 10 # Use as many CPUs as are available
+chunk_size = -1 # Use -1 if you wish automatic chunk_size calculation
 
 # Orientation grid spacing?
 # The grid spacing must be sufficently full to populate the fundamental region, I suggest 1.0 deg
@@ -131,19 +139,22 @@ iter_cutoff = 10 # If we don't find a grain after iter_cutoff iterations we brea
 # Re-rerun and save reconstruction
 re_run_and_save = 1 # If 1 this will re-run the full reconstruction with all grains and save an npz + paraview file
 
-#==============================================================================
-# %% Load the Images - NO CHANGES NEEDED
-#==============================================================================
-print('Loading Images.')
+# %% ==========================================================================
+# LOAD IMAGES AND EXPERIMENT - DO NOT EDIT
+# =============================================================================
+print('Loading the image stack...')
 # Load the cleaned image stack from the first script
-image_stack = np.load(output_dir + os.sep + image_stem + '_binarized_images.npy')
-print('Images loaded.')
-
+image_stack = np.load(output_directory + os.sep + image_stem + '_binarized_images.npy')
 # Load the omega edges - first value is the starting ome position of first image's slew, last value is the end position of the final image's slew
-omega_edges_deg = np.load(output_dir + os.sep + image_stem + '_omega_edges_deg.npy')
-
+omega_edges_deg = np.load(output_directory + os.sep + image_stem + '_omega_edges_deg.npy')
+# Load/make the beamstop where 1s indicate non-intensity-counting pixels
+if use_beam_stop_mask == 1:
+    # Load from file
+    beam_stop_parms = np.load(output_directory + os.sep + image_stem + '_beamstop_mask.npy')
+else:
+    # Generate
+    beam_stop_parms = np.array([beam_stop_y_cen, beam_stop_width])
 # Shift in omega positive or negative by X number of images
-num_img_to_shift = -2 # Postive moves positive omega, negative moves negative omega, must be integer 
 if num_img_to_shift > 0:
     # Moving positive omega so first image is not at zero, but further along
     # Using the mean omega step size - change if you need to
@@ -152,25 +163,17 @@ elif num_img_to_shift < 0:
     # For whatever reason the multiprocessor does not like negative numbers, trim the stack
     image_stack = image_stack[np.abs(num_img_to_shift):,:,:]
     omega_edges_deg = omega_edges_deg[:num_img_to_shift]
+print('Image stack loaded.')
 
+# Load the starting reconstruction
+starting_reconstruction = np.load(reconstructed_data_path)
 
-#==============================================================================
-# %% Load the Experiment - NO CHANGES NEEDED
-#==============================================================================
-# Make beamstop
-beam_stop_parms = np.array([beam_stop_y_cen, beam_stop_width])
-
-# These are here so that they are not changed
-comp_thresh = 0
-chi2_thresh = 1
-check = None
-limit = None
-generate = None
 # Generate the experiment
-experiment, nf_to_ff_id_map = \
-    nfutil.gen_trial_exp_data(grain_out_file,det_file,mat_file, mat_name, max_tth, 
-                              comp_thresh, chi2_thresh,omega_edges_deg, beam_stop_parms, 
-                              misorientation_bnd=0.0, misorientation_spacing=0.25)
+experiment = nfutil.generate_experiment(grains_out_filepath, detector_filepath, materials_filepath, material_name, 
+                                        max_tth,completness_threshold, chi2_threshold,omega_edges_deg,
+                                        beam_stop_parms,voxel_spacing,vertical_bounds,cross_sectional_dim=cross_sectional_dimensions,
+                                        misorientation_bnd=misorientation_bnd, misorientation_spacing=misorientation_spacing)
+controller = nfutil.build_controller(ncpus=ncpus, chunk_size=chunk_size, check=None, generate=None, limit=None)
 
 #==============================================================================
 # %% GENERATE ORIENTATIONS TO TEST - NO CHANGES NEEDED
@@ -180,23 +183,16 @@ quats = np.transpose(nfutil.uniform_fundamental_zone_sampling(pt_gr_num,average_
 n_grains = quats.shape[1]
 
 # Convert to rotation matrices and exponential maps
-exp_maps = np.zeros([quats.shape[1],3])
+exp_maps_to_precompute = np.zeros([quats.shape[1],3])
 for i in range(0,quats.shape[1]):
     phi = 2*np.arccos(quats[0,i])
     n = xfcapi.unitRowVector(quats[1:,i])
-    exp_maps[i,:] = phi*n
-
-# Define multiprocessing details
-controller = nfutil.build_controller(ncpus=ncpus, chunk_size=chunk_size, check=check, 
-                                        generate=generate, limit=limit)
-multiprocessing_start_method = 'fork' if hasattr(os, 'fork') else 'spawn'
+    exp_maps_to_precompute[i,:] = phi*n
 
 # Precompute all relevant orientation data for each orientaiton
-print(f'Precomputing orientation information.')
 # This can get very RAM heavy
-all_angles, all_rMat_ss, all_gvec_cs = \
-    nfutil.precompute_orientation_information_main_loop(exp_maps,experiment,controller,multiprocessing_start_method)
-print(f'Done precomputing orientation information.')
+orientation_data_to_test = \
+    nfutil.precompute_diffraction_data(experiment,controller,exp_maps_to_precompute)
 
 #==============================================================================
 # %% Generate Test Coordinates - NO CHANGES NEEDED
@@ -242,14 +238,11 @@ while np.shape(test_coordinates)[0] > coord_cutoff:
     # Grab a test coordinate
     # Using a random coordinate to avoid sampling the edges before filling in middle holes
     idx = int(np.floor(np.random.uniform(low = 0, high = np.shape(test_coordinates)[0])))
-    test_coord = test_coordinates[idx,:]
+    coordinates_to_test = test_coordinates[idx,:]
     id = ids[idx]
 
     # Test a single coordinate and refine orientation
-    refined_exp_map,refined_conf = nfutil.test_single_coordinate_main_loop(image_stack, experiment, test_coord, 
-                                                                exp_maps, all_angles, all_rMat_ss, all_gvec_cs, 
-                                                                misorientation_bnd, misorientation_spacing
-                                                                ,controller,multiprocessing_start_method)
+    refined_exp_map,refined_conf = nfutil.test_orientations_at_coordinates(experiment,controller,image_stack,orientation_data_to_test,coordinates_to_test,refine_yes_no=1)
     if refined_exp_map.ndim == 2:
         refined_exp_map = refined_exp_map[0,:]
     else:

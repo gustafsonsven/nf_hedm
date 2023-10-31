@@ -21,8 +21,22 @@ from hexrd import valunits
 from hexrd import constants
 from hexrd import instrument
 import nfutil as nfutil
-import importlib
-importlib.reload(nfutil) # This reloads the file if you made changes to it
+
+# Matplotlib
+# This is to allow interactivity of inline plots in your gui
+# the import ipywidgets as widgets line is not needed - however, you do need to run a pip install ipywidgets
+# the import ipympl line is not needed - however, you do need to run a pip install ipympl
+#import ipywidgets as widgets
+#import ipympl 
+import matplotlib
+# The next lines are formatted correctly, no matter what your IDE says
+# For inline, interactive plots (if you use these, make sure to run a plt.close() to prevent crashing)
+%matplotlib widget
+# For inline, non-interactive plots
+# %matplotlib inline
+# For pop out, interactive plots (cannot be used with an SSH tunnel)
+# %matplotlib qt
+import matplotlib.pyplot as plt
 
 # File loader imports
 import yaml
@@ -76,24 +90,24 @@ mat_name = 'ti7al'
 
 # Parameters
 orientation_tolerance = 0.25 # Deg
-layer_overlap = 0 # In voxels so 2 means I have two voxels worth of overlap on either size a single layer
+layer_overlap = 0 # In voxels so 2 means you have two voxels worth of overlap on either size a single layer
 
 # Output names
 output_dir = working_dir
-output_stem = 'merged_2023_10_22' # What do you want to call the output h5?
+output_stem = 'merged_2023_10_30' # What do you want to call the output h5?
 
 # Some flags
 save_h5 = 1 # If zero the funciton will only return the exp_maps, if 1 it will also save a paraview readable h5
 use_mask = 1 # If you have a mask make a 1, else 0
 save_grains_out = 1 # Do you want a grains.out file made?
-
+single_or_multiple_grains_out_files = 0 # If 0, a single grains.out for the volume with save, if 1 a grains.out for each diffraction volume will print 
 # %% ============================================================================
 # PATHS PREP - CAN BE EDITIED (if you need to manually input file paths)
 # ===============================================================================
 # Generate data path names
 paths = []
 for scan in np.arange(len(folder_ids)):
-    paths.append(os.path.join(working_dir,os.sep,str(folder_ids[scan]),'output',individual_nf_layer_stem_start+
+    paths.append(os.path.join(working_dir,str(folder_ids[scan]),'output',individual_nf_layer_stem_start+
                               str(folder_ids[scan])+individual_nf_layer_stem_end))
     
 # # Manually make paths if you need to
@@ -101,6 +115,7 @@ for scan in np.arange(len(folder_ids)):
 #         '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/nygren-3738-a/ti7al-9-1/nf/2/output/ti7al-9-1_2_secondary_indexing_grain_map_data.npz',
 #         '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/nygren-3738-a/ti7al-9-1/nf/3/output/ti7al-9-1_3_secondary_indexing_grain_map_data.npz',
 #         '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/nygren-3738-a/ti7al-9-1/nf/4/output/ti7al-9-1_4_secondary_indexing_grain_map_data.npz']
+
 # %% ============================================================================
 # VARIABLE PREP - DO NOT EDIT
 # ===============================================================================
@@ -121,7 +136,9 @@ mat = mats[mat_name]
 # Run the stitching and output an h5
 exp_maps = nfutil.stitch_nf_diffraction_volumes(output_dir,output_stem,paths,mat,
                                offsets, ori_tol=0.25, overlap=layer_overlap, save_h5=save_h5,
-                               use_mask=1,average_orientation=0,remove_small_grains_under=2,voxel_size=0.005,save_npz=1,save_grains_out=save_grains_out)
+                               use_mask=1,average_orientation=0,remove_small_grains_under=2,
+                               voxel_size=0.005,save_npz=1,save_grains_out=save_grains_out,
+                               single_or_multiple_grains_out_files=0)
 
 
 

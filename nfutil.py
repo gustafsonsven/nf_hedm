@@ -17,7 +17,6 @@ import contextlib
 import multiprocessing
 import tempfile
 import shutil
-import matplotlib.pyplot as plt
 import math
 import scipy
 import skimage
@@ -37,6 +36,22 @@ from hexrd import valunits
 from hexrd import xrdutil
 from hexrd.sampleOrientations import sampleRFZ
 
+# Matplotlib
+# This is to allow interactivity of inline plots in your gui
+# the import ipywidgets as widgets line is not needed - however, you do need to run a pip install ipywidgets
+# the import ipympl line is not needed - however, you do need to run a pip install ipympl
+#import ipywidgets as widgets
+#import ipympl 
+import matplotlib
+# The next lines are formatted correctly, no matter what your IDE says
+# For inline, interactive plots (if you use these, make sure to run a plt.close() to prevent crashing)
+# %matplotlib widget
+# For inline, non-interactive plots
+# %matplotlib inline
+# For pop out, interactive plots (cannot be used with an SSH tunnel)
+# %matplotlib qt
+import matplotlib.pyplot as plt
+
 # Yaml loader
 def load_instrument(yml):
     with open(yml, 'r') as f:
@@ -47,6 +62,10 @@ def load_instrument(yml):
 beam = constants.beam_vec
 Z_l = constants.lab_z
 vInv_ref = constants.identity_6x1
+
+# This is here for grabbing when needed in other scripts
+# import importlib
+# importlib.reload(nfutil) # This reloads the file if you made changes to it
 
 # %% ============================================================================
 # CONTROLLER AND MULTIPROCESSING SCAFFOLDING FUNCTIONS
@@ -1654,11 +1673,7 @@ def save_nf_data(save_dir,save_stem,grain_map,confidence_map,Xs,Ys,Zs,ori_list,t
                 np.savez(save_dir+save_stem+'_grain_map_data.npz',grain_map=grain_map,confidence_map=confidence_map,Xs=Xs,Ys=Ys,Zs=Zs,ori_list=ori_list)
 
 # Saves the general NF output in a Paraview interpretable format
-def save_nf_data_for_paraview(file_dir,file_stem,grain_map,confidence_map,Xs,Ys,Zs,ori_list,mat,tomo_mask=None,id_remap=None):
-    
-    # !!!!!!!!!!!!!!!!!!!!!
-    # The below function has not been unit tested - use at your own risk
-    # !!!!!!!!!!!!!!!!!!!!!
+def save_nf_data_for_paraview(file_dir,file_stem,grain_map,confidence_map,Xs,Ys,Zs,ori_list,mat,tomo_mask=None,id_remap=None,diffraction_volume_number=None):
     
     print('Writing HDF5 data...')
     write_to_h5(file_dir,file_stem + '_grain_map_data',np.transpose(np.transpose(confidence_map,[1,0,2]),[2,1,0]),'confidence')
@@ -1666,8 +1681,13 @@ def save_nf_data_for_paraview(file_dir,file_stem,grain_map,confidence_map,Xs,Ys,
     write_to_h5(file_dir,file_stem + '_grain_map_data',np.transpose(np.transpose(Xs,[1,0,2]),[2,1,0]),'Xs')
     write_to_h5(file_dir,file_stem + '_grain_map_data',np.transpose(np.transpose(Ys,[1,0,2]),[2,1,0]),'Ys')
     write_to_h5(file_dir,file_stem + '_grain_map_data',np.transpose(np.transpose(Zs,[1,0,2]),[2,1,0]),'Zs')
+    # Check for tomo mask
     if tomo_mask is not None:
         write_to_h5(file_dir,file_stem + '_grain_map_data',np.transpose(np.transpose(tomo_mask,[1,0,2]),[2,1,0]),'tomo_mask')
+    # Check for diffraction volume numbers
+    if diffraction_volume_number is not None:
+        write_to_h5(file_dir,file_stem + '_grain_map_data',np.transpose(np.transpose(diffraction_volume_number,[1,0,2]),[2,1,0]),'diffraction_volume_number')
+    # Create IPF colors
     rgb_image = generate_ori_map(grain_map, ori_list,mat,id_remap)# From unitcel the color is in hsl format
     write_to_h5(file_dir,file_stem + '_grain_map_data',np.transpose(np.transpose(rgb_image,[1,0,2,3]),[2,1,0,3]),'IPF_010')
     print('Writing XDMF...')
@@ -1839,7 +1859,8 @@ def plot_ori_map(grain_map, confidence_map, Xs, Zs, exp_maps,
 # Stich individual diffraction volumes
 def stitch_nf_diffraction_volumes(output_dir,output_stem,filepaths,material, 
                                   offsets,voxel_size,overlap=0,use_mask=0,ori_tol=0.0,remove_small_grains_under=0, 
-                                  average_orientation=0, save_npz=0,save_h5=0,save_grains_out=0,suppress_plots=0):
+                                  average_orientation=0, save_npz=0,save_h5=0,save_grains_out=0,suppress_plots=0,
+                                  single_or_multiple_grains_out_files=0):
     """
         Goal: 
             
@@ -2111,7 +2132,7 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,filepaths,material,
                 print('Reassigning grain ids a final time.')
 
                 # Reorder the grains IDs such that the largest grain is grain 0
-                final_ids = np.zeros(num_grains)
+                final_ids = np.zeros(num_grains,int)
                 final_sizes = np.zeros(num_grains)
                 final_orientations = np.zeros([num_grains[0],3])
                 idx = np.argsort(-working_sizes)
@@ -2173,33 +2194,82 @@ def stitch_nf_diffraction_volumes(output_dir,output_stem,filepaths,material,
     if use_mask == 1:
         mask_full = np.flip(mask_full,0)
 
+    # One final quick check
+    if np.sum(final_ids-np.unique(final_grain_map)[1:]) != 0:
+        print('Something went IDing the grains.')
+
     # Save stuff
     if save_h5 == 1:
         print('Writing h5 data...')
         if use_mask == 0:
             save_nf_data_for_paraview(output_dir,output_stem,final_grain_map,confidence_map_full,
                                             Xs_full,Ys_full,Zs_full,final_orientations,
-                                            material,tomo_mask=None,id_remap=None)
+                                            material,tomo_mask=None,id_remap=None,
+                                            diffraction_volume_number=diffraction_volume)
         else:
             save_nf_data_for_paraview(output_dir,output_stem,final_grain_map,confidence_map_full,
                                 Xs_full,Ys_full,Zs_full,final_orientations,
-                                material,tomo_mask=mask_full,id_remap=None)
+                                material,tomo_mask=mask_full,id_remap=None,
+                                diffraction_volume_number=diffraction_volume)
     if save_npz == 1:
         print('Writing NPZ data...')
         if use_mask != 0:
-            np.savez(output_dir+output_stem+'_merged_grain_map_data.npz',grain_map=final_grain_map,confidence_map=confidence_map_full,Xs=Xs_full,Ys=Ys_full,Zs=Zs_full,ori_list=final_orientations,id_remap=np.unique(final_grain_map),tomo_mask=mask_full,diffraction_volume=diffraction_volume,vertical_position_full=vertical_position_full)
+            np.savez(output_dir+output_stem+'_merged_grain_map_data.npz',grain_map=final_grain_map,
+                     confidence_map=confidence_map_full,Xs=Xs_full,Ys=Ys_full,Zs=Zs_full,
+                     ori_list=final_orientations,id_remap=np.unique(final_grain_map),tomo_mask=mask_full,
+                     diffraction_volume_number=diffraction_volume,vertical_position_full=vertical_position_full)
         else:
-            np.savez(output_dir+output_stem+'_merged_grain_map_data.npz',grain_map=final_grain_map,confidence_map=confidence_map_full,Xs=Xs_full,Ys=Ys_full,Zs=Zs_full,ori_list=final_orientations,id_remap=np.unique(final_grain_map),diffraction_volume=diffraction_volume,vertical_position_full=vertical_position_full,tomo_mask=None)
+            np.savez(output_dir+output_stem+'_merged_grain_map_data.npz',grain_map=final_grain_map,
+                     confidence_map=confidence_map_full,Xs=Xs_full,Ys=Ys_full,Zs=Zs_full,
+                     ori_list=final_orientations,id_remap=np.unique(final_grain_map),
+                     diffraction_volume_number=diffraction_volume,vertical_position_full=vertical_position_full,
+                     tomo_mask=None,diffrction_volume_number=diffraction_volume)
     
     if save_grains_out == 1:
+        # Find centroids for each grain with respect to the whole volume and each individual layer
+        print('Finding centroids for the grains.out.')
+        whole_volume_centroids = np.zeros([len(final_ids),3])
+        diffraction_volume_centroids = np.zeros([num_vols,len(final_ids),3])
+        for grain in final_ids:
+            # Where is it in the whole volume?
+            x_pos = np.mean(Xs_full[final_grain_map==grain])
+            y_pos = np.mean(Ys_full[final_grain_map==grain])
+            z_pos = np.mean(Zs_full[final_grain_map==grain])
+            # Record it
+            whole_volume_centroids[grain,:] = [x_pos,y_pos,z_pos]
+            # Run through each diffraction volume and grab the centroid in each
+            for vol in np.arange(num_vols):
+                # Create diffraction_vol mask on the grain map
+                mask = np.copy(final_grain_map)
+                mask[diffraction_volume != vol] = -1
+                # Is it in this vol?
+                if np.sum(mask==grain) > 0:
+                    x_pos = np.mean(Xs_full[mask==grain])
+                    y_pos = np.mean(Ys_full[mask==grain])
+                    z_pos = np.mean(Zs_full[mask==grain])
+                    # Record it
+                    diffraction_volume_centroids[vol,grain,:] = [x_pos,y_pos,z_pos]
+
         print('Writing grains.out data...')
-        gw = instrument.GrainDataWriter(
-            [os.path.join(output_dir, output_stem),'_grains.out']
-        )
-        for gid, ori in enumerate(final_orientations):
-            grain_params = np.hstack([ori, constants.zeros_3, constants.identity_6x1])
-            gw.dump_grain(gid, 1., 0., grain_params)
-        gw.close()
+        if single_or_multiple_grains_out_files == 0:
+            print('Writing single grains.out with centroids for whole volume...')
+            gw = instrument.GrainDataWriter(
+                os.path.join(output_dir, output_stem) + '_whole_volume_grains.out'
+            )
+            for gid, ori in enumerate(final_orientations):
+                grain_params = np.hstack([ori, whole_volume_centroids[gid,:], constants.identity_6x1])
+                gw.dump_grain(gid, 1., 0., grain_params)
+            gw.close()
+        elif single_or_multiple_grains_out_files == 1:
+            print('Writing multiple grains.out with centroids for each volume...')
+            for vol in np.arange(num_vols):
+                gw = instrument.GrainDataWriter(
+                    os.path.join(output_dir, output_stem) + '_diff_vol_num_' + str(vol) + '_grains.out'
+                )
+                for gid, ori in enumerate(final_orientations):
+                    grain_params = np.hstack([ori, diffraction_volume_centroids[vol,gid,:], constants.identity_6x1])
+                    gw.dump_grain(gid, 1., 0., grain_params)
+                gw.close()
 
     return final_orientations
 
