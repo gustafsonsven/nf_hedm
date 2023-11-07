@@ -130,7 +130,7 @@ voxel_spacing = 0.005 # in mm, voxel spacing for the near field reconstruction
 # Vertical (y) reconstruction voxel bounds in mm, ALWAYS USED REGARDLESS OF TOMOGRAPHY
 # If bounds are equal, a single layer is produced
 # Suggestion: set v_bounds to cover exactly the voxel_spacing when calibrating
-vertical_bounds = [-0.06, 0.06] # mm 
+vertical_bounds = [-0.0025, 0.0025] # mm 
 
 # Beam stop details
 use_beam_stop_mask = 1 # If 1, this will ignore the next two parameters and load the mask made by the raw_to_binary_nf_image_processor.py
@@ -191,7 +191,7 @@ grain_map, confidence_map = nfutil.process_raw_data(raw_confidence,raw_idx,Xs.sh
 # %% ==========================================================================
 # Show Images - CAN BE EDITED
 # =============================================================================
-layer_num = 10 # Which layer in Y?
+layer_num = 0 # Which layer in Y?
 conf_thresh = 0.6 # If set to None no threshold is used
 nfutil.plot_ori_map(grain_map, confidence_map, Xs, Zs, experiment.exp_maps, 
                     layer_num,experiment.mat[material_name],experiment.remap,conf_thresh)
