@@ -49,12 +49,12 @@ def load_instrument(yml):
 # USER INFORMATION - CAN BE EDITED
 # ===============================================================================
 # Working directory - could be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample/YOUR FAVORITE BOOKKEEPING STRUCTURE'
-working_dir = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/nf'
+working_dir = '/your/path/here'
 
 # Naming of each layer to read in - these need to be in the output folders of each folder containing each layer
 # The below two variables I concatate into start + folder_id + end
-individual_nf_layer_stem_start = 'ti-13-exsitu_layer_'
-individual_nf_layer_stem_end = '_with_missing_grains_grain_map_data.npz'
+individual_nf_layer_stem_start = 'stem_start_'
+individual_nf_layer_stem_end = '_stem_finish.npz'
 folder_ids = [1,2,3,4,5,6,7,8,9,10] # Folder ids for each separate nf layer (there is an output folder within each - this works for my folder construction
 
 # You can manually make the paths below if you want!
@@ -94,7 +94,7 @@ layer_overlap = 0 # In voxels so 2 means you have two voxels worth of overlap on
 
 # Output names
 output_dir = working_dir
-output_stem = 'merged_2023_10_30' # What do you want to call the output h5?
+output_stem = 'merged_sample_1_name' # What do you want to call the output h5?
 
 # Some flags
 save_h5 = 1 # If zero the funciton will only return the exp_maps, if 1 it will also save a paraview readable h5

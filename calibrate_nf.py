@@ -82,55 +82,61 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 # %% ==========================================================================
-# USER DEFINITIONS - CAN BE EDITED
-#==============================================================================
+# COMMON USER INFORMATION - CAN BE EDITED
+# =============================================================================
 # Working directory - could be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample/YOUR FAVORITE BOOKKEEPING STRUCTURE'
-working_directory = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/nf/1'
+working_directory = '/your/path/here'
 
 # Where do you want to drop any output files
 output_directory = working_directory + '/output/'
-output_stem = 'ti-13-exsitu_layer_1' # Something relevant to your sample
+output_stem = 'sample_1_name' # Something relevant to your sample
 
 # Detector file (retiga, manta,...)
-detector_filepath = working_directory + '/retiga.yml'
+detector_filepath = working_directory + '/manta.yml'
 
 # Materials file - from HEXRDGUI (MAKE SURE YOUR HKLS ARE DEFINED CORRECTLY FOR YOUR MATERIAL)
 materials_filepath = working_directory + '/materials.h5'
 
 # Material name in materials.h5 file from HEXRGUI
-material_name = 'ti7al'
+material_name = 'in718'
 max_tth = None  # degrees, if None is input max tth will be set by the geometry
 # NOTE: Again, make sure the HKLs are set correctly in the materials file that you loaded
     # If you set max_tth to 20 degrees, but you only have HKLs out to 15 degrees selected
     # then you will only use the selected HKLs out to 15 degrees
 
-# What was the stem you used during image creation via raw_to_binary_nf_image_processor.py?
-image_stem = 'ti-13-exsitu_layer_1'
-num_img_to_shift = -2 # Postive moves positive omega, negative moves negative omega, must be integer (if nothing was wrong with your metadata this should be 0)
+# What was the stem you used during image creation via nf_multithreaded_image_processing?
+image_stem = 'sample_1_images'
+num_img_to_shift = 0 # Postive moves positive omega, negative moves negative omega, must be integer (if nothing was wrong with your metadata this should be 0)
 
 # Grains.out information
-grains_out_filepath = '/nfs/chess/aux/cycles/2023-2/id3a/shanks-3731-a/reduced_data/ti-13-exsitu/ff/output/7/grains.out'
+grains_out_filepath = '/your/path/here/grains.out'
 # Completness threshold - grains with completness GREATER than this value will be used
 completness_threshold = 0.25 # 0.5 is a good place to start
 # Chi^2 threshold - grains with Chi^2 LESS than this value will be used
 chi2_threshold = 0.005  # 0.005 is a good place to stay at unless you have good reason to change it
+
+# Tomorgraphy mask information
+# Mask location
+mask_filepath = None # If you have no mask set mask_filepath = None
+# Vertical offset: this is generally the difference in y motor positions between the tomo and nf layer (tomo_motor_z-nf_motor_z), needed for registry
+mask_vertical_offset = 0.0 # mm
 
 # If no tomography is used (use_mask=False) we will generate a square test grid
 # Cross sectional to reconstruct (should be at least 20%-30% over sample width)
 cross_sectional_dimensions = 1.3 # Side length of the cross sectional region to probe (mm)
 voxel_spacing = 0.005 # in mm, voxel spacing for the near field reconstruction
 
-# Diffraction volume vertical bounds
-# NOTE: Calibration will automatically use a single layer when probing the X and Z positions and the below values for Y calibration
-vertical_bounds = [-0.05, 0.05] # mm 
+# Vertical (y) reconstruction voxel bounds in mm, ALWAYS USED REGARDLESS OF TOMOGRAPHY
+# A single layer is produced if, for example, vertical_bounds = [-0.0025, 0.0025] with a 0.005 voxel size
+vertical_bounds = [-0.06, 0.06] # mm 
 
 # Beam stop details
-use_beam_stop_mask = 0 # If 1, this will ignore the next two parameters and load the mask made by the raw_to_binary_nf_image_processor.py
+use_beam_stop_mask = 1 # If 1, this will ignore the next two parameters and load the mask made by the raw_to_binary_nf_image_processor.py
 beam_stop_y_cen = 0.0  # mm, measured from the origin of the detector paramters
-beam_stop_width = 0.35  # mm, width of the beam stop vertically
+beam_stop_width = 0.1  # mm, width of the beam stop vertically
 
 # Multiprocessing and RAM parameters
-ncpus = 128 #mp.cpu_count() - 10 # Use as many CPUs as are available
+ncpus = 128 # mp.cpu_count() - 10 # Use as many CPUs as are available
 chunk_size = -1 # Use -1 if you wish automatic chunk_size calculation
 
 # %% ==========================================================================

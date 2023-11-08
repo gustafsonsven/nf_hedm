@@ -25,6 +25,28 @@ NOTES:
     - Grains found in NF should be pushed back to FF to attempt a fit - FF will provide
         a more refined orientation.  
 
+    - Note that HEXRD works with grain orientations which are defined from CRYSTAL TO SAMPLE 
+        specifically as v_samp = R_cry_to_samp * v_cry
+    - Here is a description pulled from the xf.py script within HEXRD.  (COB is change of basis). 
+    
+        gVec_c : numpy.ndarray
+            (3, n) array of n reciprocal lattice vectors in the CRYSTAL FRAME.
+        rMat_s : numpy.ndarray
+            (3, 3) array, the COB taking SAMPLE FRAME components to LAB FRAME. 
+        rMat_c : numpy.ndarray
+            (3, 3) array, the COB taking CRYSTAL FRAME components to SAMPLE FRAME.
+    
+        # form unit reciprocal lattice vectors in lab frame (w/o translation)
+        gVec_l = np.dot(rMat_s, np.dot(rMat_c, unitVector(gVec_c)))
+    
+    The line above is the important one.  It is the coordinate transformation of the g vector 
+        from the crystal frame to the lab frame.  rMat_c is the orientation matrix that we have 
+        outputted into the grain.out files from HEXRD (though it is expressed in axis angle form).  
+        Note that rMat_c is defined from the crystal to the sample frame, but more specifically it transforms a 
+        vector in the crystal frame into the sample frame as: gVec_s = np.dot(rMat_c,gVec_c).  Note that 
+        np.dot in python is the same as rMat_c*gVec_c in matlab (a pre-multiplication).  Recall 
+        of course that gVec_c here is a column vector (tall – 3x1 in both python and matlab) as is gVec_s.
+
 """
 # %% ==========================================================================
 # IMPORTS - DO NOT CHANGE
@@ -58,71 +80,72 @@ import matplotlib
 # %matplotlib qt
 import matplotlib.pyplot as plt
 
-import importlib
-importlib.reload(nfutil) # This reloads the file if you made changes to it
-
 # %% ==========================================================================
-# USER INFORMATION - CAN BE EDITED
+# COMMON USER INFORMATION - CAN BE EDITED
 # =============================================================================
 # Working directory - could be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample/YOUR FAVORITE BOOKKEEPING STRUCTURE'
-working_directory = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/nf/3'
+working_directory = '/your/path/here'
 
 # Where do you want to drop any output files
 output_directory = working_directory + '/output/'
-output_stem = 'ti-13-exsitu_layer_3_with_missing_grains' # Something relevant to your sample
+output_stem = 'sample_1_name' # Something relevant to your sample
 
 # Detector file (retiga, manta,...)
-detector_filepath = working_directory + '/retiga.yml'
+detector_filepath = working_directory + '/manta.yml'
 
 # Materials file - from HEXRDGUI (MAKE SURE YOUR HKLS ARE DEFINED CORRECTLY FOR YOUR MATERIAL)
 materials_filepath = working_directory + '/materials.h5'
 
 # Material name in materials.h5 file from HEXRGUI
-material_name = 'ti7al'
+material_name = 'in718'
 max_tth = None  # degrees, if None is input max tth will be set by the geometry
 # NOTE: Again, make sure the HKLs are set correctly in the materials file that you loaded
     # If you set max_tth to 20 degrees, but you only have HKLs out to 15 degrees selected
     # then you will only use the selected HKLs out to 15 degrees
-# Point group number - Check out the nfutil for more - (Ti-alpha (Hexagonal) = 27) (Nickel (FCC) = 32)
-pt_gr_num = 27
 
 # What was the stem you used during image creation via nf_multithreaded_image_processing?
-image_stem = 'ti-13-exsitu_layer_3'
+image_stem = 'sample_1_images'
 num_img_to_shift = 0 # Postive moves positive omega, negative moves negative omega, must be integer (if nothing was wrong with your metadata this should be 0)
 
-# Where is the original grain map?
-reconstructed_data_path = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/nf/3/output/ti-13-exsitu_layer_3_grain_map_data.npz'
-
-# Tomorgraphy mask information
-# Mask location
-mask_filepath = None #'/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/tomo/coarse_tomo_mask.npz' # If you have no mask set mask_filepath = None
-# Vertical offset: this is generally the difference in y motor positions between the tomo and nf layer (tomo_motor_z-nf_motor_z), needed for registry
-mask_vertical_offset = -(-0.315) # mm
-
 # Grains.out information
-grains_out_filepath = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/nf/merged_2023_09_13.out'
+grains_out_filepath = '/your/path/here/grains.out'
 # Completness threshold - grains with completness GREATER than this value will be used
 completness_threshold = 0.25 # 0.5 is a good place to start
 # Chi^2 threshold - grains with Chi^2 LESS than this value will be used
 chi2_threshold = 0.005  # 0.005 is a good place to stay at unless you have good reason to change it
 
+# Tomorgraphy mask information
+# Mask location
+mask_filepath = None # If you have no mask set mask_filepath = None
+# Vertical offset: this is generally the difference in y motor positions between the tomo and nf layer (tomo_motor_z-nf_motor_z), needed for registry
+mask_vertical_offset = 0.0 # mm
+
+# If no tomography is used (use_mask=False) we will generate a square test grid
 # Cross sectional to reconstruct (should be at least 20%-30% over sample width)
 cross_sectional_dimensions = 1.3 # Side length of the cross sectional region to probe (mm)
 voxel_spacing = 0.005 # in mm, voxel spacing for the near field reconstruction
 
 # Vertical (y) reconstruction voxel bounds in mm, ALWAYS USED REGARDLESS OF TOMOGRAPHY
-# If bounds are equal, a single layer is produced
-# Suggestion: set v_bounds to cover exactly the voxel_spacing when calibrating
+# A single layer is produced if, for example, vertical_bounds = [-0.0025, 0.0025] with a 0.005 voxel size
 vertical_bounds = [-0.06, 0.06] # mm 
 
 # Beam stop details
-use_beam_stop_mask = 0 # If 1, this will ignore the next two parameters and load the mask made by the raw_to_binary_nf_image_processor.py
+use_beam_stop_mask = 1 # If 1, this will ignore the next two parameters and load the mask made by the raw_to_binary_nf_image_processor.py
 beam_stop_y_cen = 0.0  # mm, measured from the origin of the detector paramters
-beam_stop_width = 0.3  # mm, width of the beam stop vertically
+beam_stop_width = 0.1  # mm, width of the beam stop vertically
 
 # Multiprocessing and RAM parameters
 ncpus = 128 # mp.cpu_count() - 10 # Use as many CPUs as are available
 chunk_size = -1 # Use -1 if you wish automatic chunk_size calculation
+
+# %% ==========================================================================
+# UNIQUE USER INFORMATION - CAN BE EDITED
+# =============================================================================
+# Point group number - Check out the nfutil for more - (Ti-alpha (Hexagonal) = 27) (Nickel (FCC) = 32)
+pt_gr_num = 32
+
+# Where is the original grain map?
+reconstructed_data_path = '/your/path/here/sample_reconstruction.npz'
 
 # Orientation grid spacing?
 # The grid spacing must be sufficently full to populate the fundamental region, I suggest 1.0 deg
@@ -137,11 +160,10 @@ errode_free_surface = 1 # NF is poor at the surface already, removes the free su
 
 # Define a cutoff value for when to switch to a brute force
 coord_cutoff_scale = 0.15 # Once we only have coord_cutoff_scale*100 % voxels left to look at we transition to brute search of each voxel - its quicker - 0.15 is good
-iter_cutoff = 10 # If we don't find a grain after iter_cutoff iterations we break and go straight to searching all voxels - 10 is good
+iter_cutoff = 10 # If we don't find a grain after iter_cutoff iterations we break and go straight to searching all voxels - 10 is good but you may need more if you have a poor reconstruction
 
 # Re-rerun and save reconstruction
 re_run_and_save = 1 # If 1 this will re-run the full reconstruction with all grains and save an npz + paraview file
-
 # %% ==========================================================================
 # LOAD IMAGES AND EXPERIMENT - DO NOT CHANGE
 # =============================================================================
@@ -300,8 +322,8 @@ while count < 2:#np.shape(test_coordinates)[0] > coord_cutoff:
     # Time check
     print(f"Took {np.round((timeit.default_timer() - t0)/60.)} minutes so far.")
 print(f'Found {new_grains} with random serach.  Wrapping up last chunk of coordinates with a brute search and refinement.')
-#==============================================================================
-# %% BRUTE FORCE REMAINING VOXELS - DO NOT CHANGE
+# %% ==========================================================================
+# BRUTE FORCE REMAINING VOXELS - DO NOT CHANGE
 #==============================================================================
 # At this point, it is statistically likely that we found most of the grains
 # The startup and shutdown cost of the multiprocessing is not time cheap so we will 
@@ -312,8 +334,8 @@ refined_exp_maps,refined_confidence,refined_idx = nfutil.test_orientations_at_co
 print(f'Search done, entering refinement on orientations with greater than {confidence_threshold} confidence.')
 print(f"Took {np.round((timeit.default_timer() - t0)/60.)} minutes so far.")
 
-#==============================================================================
-# %% CULL DUPLICATE ORIENTATIONS - DO NOT CHANGE
+# %% ==========================================================================
+# CULL DUPLICATE ORIENTATIONS - DO NOT CHANGE
 #==============================================================================
 print('Checking for similar orientations.')
 # Initialize
@@ -334,7 +356,7 @@ while working_quats is not None:
         else:
             [misorientations, a] = rotations.misorientation(grain_quats,test_quats)
         # Which are the same
-        idx_to_merge = misorientations < np.radians(0.1)
+        idx_to_merge = misorientations < np.radians(misorientation_spacing)
         # Remove them and add a single orientation to the list
         final_quats[:,count] = working_quats[:,0]
         working_quats = np.delete(working_quats,idx_to_merge,1)
@@ -346,8 +368,8 @@ final_quats = final_quats[:,:count-1]
 final_exp_maps = rotations.expMapOfQuat(final_quats)
 print(f'Found {count} additional grains during brute force search.')
 
-#==============================================================================
-# %% SAVE A FINAL GRAINS.OUT - DO NOT CHANGE
+# %% ==========================================================================
+# SAVE A FINAL GRAINS.OUT - DO NOT CHANGE
 #==============================================================================
 print('Saving a final grains.out.')
 final_exp_maps = np.vstack([new_exp_maps,np.transpose(final_exp_maps)])
@@ -361,19 +383,24 @@ for gid, ori in enumerate(final_exp_maps):
 gw.close()
 print('Done.')
 
-#==============================================================================
-# %% Re-Run Reconstruction and Save - NO CHANGES NEEDED
+# %% ==========================================================================
+# RE-RUN RECONSTRUCTION AND SAVE OUTPUTS - DO NOT CHANGE
 #==============================================================================
 if re_run_and_save == 1:
+    print('Re-running reconstruction.')
     # Generate the experiment
     grain_out_file = os.path.join(output_directory, output_stem+'.out')
     experiment = nfutil.generate_experiment(grains_out_filepath, detector_filepath, materials_filepath, material_name, 
                                             max_tth,completness_threshold, chi2_threshold,omega_edges_deg,
                                             beam_stop_parms,voxel_spacing,vertical_bounds,cross_sectional_dim=cross_sectional_dimensions)
     controller = nfutil.build_controller(ncpus=ncpus, chunk_size=chunk_size, check=None, generate=None, limit=None)
+    # Generate space
     Xs, Ys, Zs, mask, test_coordinates = nfutil.generate_test_coordinates(experiment.cross_sectional_dimensions, experiment.vertical_bounds, voxel_spacing,mask_data_file=mask_filepath,mask_vert_offset=mask_vertical_offset)
+    # Precompute
     precomputed_orientation_data = nfutil.precompute_diffraction_data(experiment,controller,experiment.exp_maps)
+    # Run the search
     raw_exp_maps, raw_confidence, raw_idx = nfutil.test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=0)
+    # Process the output
     grain_map, confidence_map = nfutil.process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=mask,id_remap=experiment.remap)
     # Save npz
     nfutil.save_nf_data(output_directory, output_stem, grain_map, confidence_map,

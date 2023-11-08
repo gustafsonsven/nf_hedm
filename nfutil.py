@@ -1532,7 +1532,7 @@ def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, com
     return experiment
 
 # Raw data processor
-def process_raw_data(raw_confidence,raw_idx,volume_dims,mask=None,id_remap=None):
+def process_raw_data(raw_confidence,raw_idx,volume_dims,mask=None,id_remap=None,raw_misorientation=None):
     # Assign the confidence to the correct voxel
     confidence_map = np.zeros(volume_dims)
     if mask is None:
@@ -1544,12 +1544,18 @@ def process_raw_data(raw_confidence,raw_idx,volume_dims,mask=None,id_remap=None)
         mapped_idx = id_remap[raw_idx]
     else:
         mapped_idx = raw_idx
-
+    
     # Assign the indexing to the correct voxel
     grain_map = np.zeros(volume_dims)
     grain_map[mask] = mapped_idx
 
-    return grain_map, confidence_map
+    # Reshape the misorientation if provided
+    if raw_misorientation is not None:
+        misorientation_map = np.zeros(volume_dims)
+        misorientation_map[mask] = raw_misorientation
+        return grain_map, confidence_map, misorientation_map
+    else:
+        return grain_map, confidence_map
 
 # %% ============================================================================
 # DATA WRITER FUNCTIONS
@@ -1688,7 +1694,7 @@ def save_nf_data(save_dir,save_stem,grain_map,confidence_map,Xs,Ys,Zs,ori_list,t
                 np.savez(save_dir+save_stem+'_grain_map_data.npz',grain_map=grain_map,confidence_map=confidence_map,Xs=Xs,Ys=Ys,Zs=Zs,ori_list=ori_list)
 
 # Saves the general NF output in a Paraview interpretable format
-def save_nf_data_for_paraview(file_dir,file_stem,grain_map,confidence_map,Xs,Ys,Zs,ori_list,mat,tomo_mask=None,id_remap=None,diffraction_volume_number=None):
+def save_nf_data_for_paraview(file_dir,file_stem,grain_map,confidence_map,Xs,Ys,Zs,ori_list,mat,tomo_mask=None,id_remap=None,diffraction_volume_number=None,misorientation_map=None):
     
     print('Writing HDF5 data...')
     write_to_h5(file_dir,file_stem + '_grain_map_data',np.transpose(np.transpose(confidence_map,[1,0,2]),[2,1,0]),'confidence')
@@ -1702,6 +1708,9 @@ def save_nf_data_for_paraview(file_dir,file_stem,grain_map,confidence_map,Xs,Ys,
     # Check for diffraction volume numbers
     if diffraction_volume_number is not None:
         write_to_h5(file_dir,file_stem + '_grain_map_data',np.transpose(np.transpose(diffraction_volume_number,[1,0,2]),[2,1,0]),'diffraction_volume_number')
+    # Write the misorientaiton if it exits
+    if misorientation_map is not None:
+        write_to_h5(file_dir,file_stem + '_grain_map_data',np.transpose(np.transpose(misorientation_map,[1,0,2]),[2,1,0]),'misorientation_map')
     # Create IPF colors
     rgb_image = generate_ori_map(grain_map, ori_list,mat,id_remap)# From unitcel the color is in hsl format
     write_to_h5(file_dir,file_stem + '_grain_map_data',np.transpose(np.transpose(rgb_image,[1,0,2,3]),[2,1,0,3]),'IPF_010')

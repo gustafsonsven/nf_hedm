@@ -60,12 +60,12 @@ import matplotlib.pyplot as plt
 # USER INPUT - CAN BE EDITED
 #====================================================================================
 # Where are we working?
-working_dir = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/tomo/'
+working_dir = '/your/path/here'
 output_dir = working_dir
 # Reconstructed data filepath
-CHAP_file_path = working_dir + 'ti-13-exsitu_reconstructed_tomo.nxs' # Nexsus file with reconstructed tomo from CHAP
+CHAP_file_path = working_dir + 'nexus_file_name.nxs' # Nexsus file with reconstructed tomo from CHAP
 # Output file name?
-output_stem = 'ti-13-exsitu'
+output_stem = 'sample_1_name'
 # DBR string
 dbr_str = 'shanks-3731-a'
 

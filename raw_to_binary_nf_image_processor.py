@@ -56,12 +56,12 @@ import matplotlib.pyplot as plt
 # =============================================================================
 # Paths and names
 # Raw directory - could be of the form: '/nfs/chess/raw/[cycle ID]/[beamline]/BTR/sample'
-nf_raw_folder = '/nfs/chess/raw/current/id3a/pagan-3807-a/in718ln'
+nf_raw_folder = '/data/path/here'
 json_and_par_starter = 'id3a-rams2_nf*'
 # Working directory - could be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample/YOUR FAVORITE BOOKKEEPING STRUCTURE'
-working_directory = '/nfs/chess/user/seg246/software/development_working_space'
+working_directory = '/your/path/here'
 output_dir = working_directory + '/output' # Folder must exist already
-output_stem = 'test_2x_objective_with_scintillator_layer_3'
+output_stem = 'sample_1_name'
 
 # Metadata Paramters
 target_zheight = -0.25 # At what z height was this NF taken?  This defines what set of scans is grabbed from metadata.  
@@ -127,7 +127,7 @@ omegas,omega_edges_deg = nfutil.generate_omega_edges(meta,num_imgs)
 # ==============================================================================
 # Load all of the images
 controller = nfutil.build_controller(ncpus=ncpus, chunk_size=chunk_size, check=None, generate=None, limit=None)
-raw_image_stack = nfutil.load_all_images(filenames[0:10],controller)
+raw_image_stack = nfutil.load_all_images(filenames,controller)
 
 # %% ===========================================================================
 # PLOTTING - CAN BE EDITED
