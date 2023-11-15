@@ -65,7 +65,6 @@ import os
 
 # Hexrd imports
 import nfutil as nfutil
-import nf_config
 
 # Matplotlib
 # This is to allow interactivity of inline plots in your gui
@@ -83,76 +82,19 @@ import matplotlib
 # %matplotlib qt
 import matplotlib.pyplot as plt
 
-# ==============================================================================
-# %% FILES TO LOAD -CAN BE EDITED
-# ==============================================================================
-
-config_fname = '/nfs/chess/user/seg246/software/development/nf_config.yml'
-cfg = nf_config.open(config_fname)[0]
-
-analysis_name = cfg.analysis_name
-main_dir = cfg.main_dir
-output_dir = cfg.output_dir
-
-output_plot_check = cfg.output_plot_check
-
-beam_energy = cfg.experiment.beam_energy
-grain_out_file = cfg.input_files.grain_out_file
-det_file = cfg.input_files.det_file
-mat_file = cfg.input_files.mat_file
-mat_name = cfg.experiment.mat_name
-max_tth = cfg.experiment.max_tth
-comp_thresh = cfg.experiment.comp_thresh
-chi2_thresh = cfg.experiment.chi2_thresh
-
-nframes = cfg.images.nframes
-
-if cfg.experiment.misorientation:
-    misorientation_bnd = np.array(
-        cfg.experiment.misorientation['misorientation_bnd'])
-    misorientation_spacing = \
-        cfg.experiment.misorientation['misorientation_spacing']
-
-ome_range_deg = cfg.experiment.ome_range
-
-beam_stop_parms = np.array(
-    [cfg.reconstruction.beam_stop_y_cen, cfg.reconstruction.beam_stop_width])
-
-
-# reconstruction size parameters
-cross_sectional_dim = cfg.reconstruction.cross_sectional_dim  # 2.0
-voxel_spacing = cfg.reconstruction.voxel_spacing
-v_bnds = cfg.reconstruction.v_bnds
-
-
-# project_single_layer = cfg.reconstruction.tomorgrproject_single_layer
-tomo_mask = cfg.reconstruction.tomography
-if tomo_mask:
-    mask_data_file = tomo_mask['mask_data_file']
-    mask_vert_offset = tomo_mask['mask_vert_offset']
-    project_single_layer = tomo_mask['project_single_layer']
-
-
-ncpus = cfg.multiprocessing.num_cpus
-chunk_size = cfg.multiprocessing.chunk_size
-check = cfg.multiprocessing.check
-limit = cfg.multiprocessing.limit
-generate = cfg.multiprocessing.generate
-
-max_RAM = cfg.multiprocessing.max_RAM  # this is in bytes
-
-
+import importlib
+importlib.reload(nfutil) # This reloads the file if you made changes to it
 
 
 # %% ==========================================================================
-# USER INFORMATION - CAN BE EDITED
+# COMMON USER INFORMATION - CAN BE EDITED
 # =============================================================================
 # Working directory - could be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample/YOUR FAVORITE BOOKKEEPING STRUCTURE'
-working_directory = '/your/path/here'
+working_directory = '/nfs/chess/user/seg246/software/development_working_space'
 
 # Where do you want to drop any output files
 output_directory = working_directory + '/output/'
-output_stem = 'sample_1_name' # Something relevant to your sample
+output_stem = 'ss718-1nf_layer15' # Something relevant to your sample
 
 # Detector file (retiga, manta,...)
 detector_filepath = working_directory + '/manta.yml'
@@ -161,28 +103,28 @@ detector_filepath = working_directory + '/manta.yml'
 materials_filepath = working_directory + '/materials.h5'
 
 # Material name in materials.h5 file from HEXRGUI
-material_name = 'in718'
+material_name = 'in718_ss'
 max_tth = None  # degrees, if None is input max tth will be set by the geometry
 # NOTE: Again, make sure the HKLs are set correctly in the materials file that you loaded
     # If you set max_tth to 20 degrees, but you only have HKLs out to 15 degrees selected
     # then you will only use the selected HKLs out to 15 degrees
 
 # What was the stem you used during image creation via nf_multithreaded_image_processing?
-image_stem = 'sample_1_images'
+image_stem = 'ss718-1ff_layer15'
 num_img_to_shift = 0 # Postive moves positive omega, negative moves negative omega, must be integer (if nothing was wrong with your metadata this should be 0)
 
 # Grains.out information
-grains_out_filepath = '/your/path/here/grains.out'
+grains_out_filepath = '/nfs/chess/user/djs522/beamtime_06_2023/ss718-1ff/ss718-1ff_scan_9_1/grains.out'
 # Completness threshold - grains with completness GREATER than this value will be used
-completness_threshold = 0.25 # 0.5 is a good place to start
+completness_threshold = 0.0 # 0.5 is a good place to start
 # Chi^2 threshold - grains with Chi^2 LESS than this value will be used
-chi2_threshold = 0.005  # 0.005 is a good place to stay at unless you have good reason to change it
+chi2_threshold = 0.5  # 0.005 is a good place to stay at unless you have good reason to change it
 
 # Tomorgraphy mask information
 # Mask location
-mask_filepath = None # If you have no mask set mask_filepath = None
+mask_filepath = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/tomo/coarse_tomo_mask.npz' # If you have no mask set mask_filepath = None
 # Vertical offset: this is generally the difference in y motor positions between the tomo and nf layer (tomo_motor_z-nf_motor_z), needed for registry
-mask_vertical_offset = 0.0 # mm
+mask_vertical_offset = -(-0.0) # mm
 
 # If no tomography is used (use_mask=False) we will generate a square test grid
 # Cross sectional to reconstruct (should be at least 20%-30% over sample width)
@@ -190,17 +132,24 @@ cross_sectional_dimensions = 1.3 # Side length of the cross sectional region to 
 voxel_spacing = 0.005 # in mm, voxel spacing for the near field reconstruction
 
 # Vertical (y) reconstruction voxel bounds in mm, ALWAYS USED REGARDLESS OF TOMOGRAPHY
-# A single layer is produced if, for example, vertical_bounds = [-0.0025, 0.0025] with a 0.005 voxel size
+# If bounds are equal, a single layer is produced
+# Suggestion: set v_bounds to cover exactly the voxel_spacing when calibrating
 vertical_bounds = [-0.0025, 0.0025] # mm 
 
 # Beam stop details
-use_beam_stop_mask = 1 # If 1, this will ignore the next two parameters and load the mask made by the raw_to_binary_nf_image_processor.py
+use_beam_stop_mask = 0 # If 1, this will ignore the next two parameters and load the mask made by the raw_to_binary_nf_image_processor.py
 beam_stop_y_cen = 0.0  # mm, measured from the origin of the detector paramters
-beam_stop_width = 0.1  # mm, width of the beam stop vertically
+beam_stop_width = 0.0  # mm, width of the beam stop vertically
 
 # Multiprocessing and RAM parameters
 ncpus = 128 # mp.cpu_count() - 10 # Use as many CPUs as are available
 chunk_size = -1 # Use -1 if you wish automatic chunk_size calculation
+
+# Orientation grid spacing?
+refine_yes_no = 1
+# The grid spacing must be sufficently full to populate the fundamental region, I suggest 1.0 deg
+misorientation_bnd = 1.0  # Refinement bounds on found orientation - in degrees - about half of your ori_grid_spacing
+misorientation_spacing = 0.25  # Step size for orientation refinement - in degrees - orientation resolution of NF is about 0.1 deg
 
 # %% ==========================================================================
 # LOAD IMAGES AND EXPERIMENT - DO NOT EDIT
@@ -231,7 +180,8 @@ print('Image stack loaded.')
 # Generate the experiment
 experiment = nfutil.generate_experiment(grains_out_filepath, detector_filepath, materials_filepath, material_name, 
                                         max_tth,completness_threshold, chi2_threshold,omega_edges_deg,
-                                        beam_stop_parms,voxel_spacing,vertical_bounds,cross_sectional_dim=cross_sectional_dimensions)
+                                        beam_stop_parms,voxel_spacing,vertical_bounds,cross_sectional_dim=cross_sectional_dimensions,
+                                        misorientation_bnd=misorientation_bnd, misorientation_spacing=misorientation_spacing)
 controller = nfutil.build_controller(ncpus=ncpus, chunk_size=chunk_size, check=None, generate=None, limit=None)
 # %% ===========================================================================
 # LOAD MASK / GENERATE TEST COORDINATES  - NO CHANGES NEEDED
@@ -246,14 +196,14 @@ precomputed_orientation_data = nfutil.precompute_diffraction_data(experiment,con
 # %% ==========================================================================
 # TEST ORIENTATIONS AND PROCESS OUTPUT
 # =============================================================================
-raw_exp_maps, raw_confidence, raw_idx = nfutil.test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=0)
-grain_map, confidence_map = nfutil.process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=mask,id_remap=experiment.remap)
+raw_exp_maps, raw_confidence, raw_idx, raw_misorientation = nfutil.test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=refine_yes_no,return_misorientation=1)
+grain_map, confidence_map, misorientation_map = nfutil.process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=mask,id_remap=experiment.remap,raw_misorientation=raw_misorientation)
 
 # %% ==========================================================================
 # Show Images - CAN BE EDITED
 # =============================================================================
 layer_num = 0 # Which layer in Y?
-conf_thresh = 0.6 # If set to None no threshold is used
+conf_thresh = 0.4 # If set to None no threshold is used
 nfutil.plot_ori_map(grain_map, confidence_map, Xs, Zs, experiment.exp_maps, 
                     layer_num,experiment.mat[material_name],experiment.remap,conf_thresh)
 # Quick note - nfutil assumes that the IPF reference vector is [0 1 0]
@@ -273,7 +223,7 @@ nfutil.save_nf_data(output_directory, output_stem, grain_map, confidence_map,
 # =============================================================================
 nfutil.save_nf_data_for_paraview(output_directory,output_stem,grain_map,confidence_map,Xs,Ys,Zs,
                              experiment.exp_maps,experiment.mat[material_name], tomo_mask=mask,
-                             id_remap=experiment.remap)
+                             id_remap=experiment.remap,misorientation_map=misorientation_map)
 # Quick note - nfutil assumes that the IPF reference vector is [0 1 0]
 
 
