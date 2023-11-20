@@ -12,22 +12,22 @@ class InputConfig(Config):
         self._cfg = cfg
         
     @property
-    def det_file(self):
-        temp = self._cfg.get('input_files:det_file')
+    def detector_file(self):
+        temp = self._cfg.get('input_files:detector_file')
         if isinstance(temp, (int, float)):
             temp = [temp, temp]
         return temp
 
     @property
-    def mat_file(self):
-        temp = self._cfg.get('input_files:mat_file')
+    def materials_file(self):
+        temp = self._cfg.get('input_files:materials_file')
         if isinstance(temp, (int, float)):
             temp = [temp, temp]
         return temp
 
     @property
-    def grain_out_file(self):
-        temp = self._cfg.get('input_files:grain_out_file')
+    def grains_out_file(self):
+        temp = self._cfg.get('input_files:grains_out_file')
         if isinstance(temp, (int, float)):
             temp = [temp, temp]
         return temp

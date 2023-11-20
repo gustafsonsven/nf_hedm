@@ -1,34 +1,45 @@
 
-analysis_name: NF_vol0
+analysis_name: c103-1_layer_1 # The name you want all your output files to have within thier filename (relevant to the sample)
 
-main_dir: './' #/nfs/chess/user/relim/voisin-3061-c/nf_s26 #working directory path
-output_dir: './' #/nfs/chess/user/relim/voisin-3061-c/nf_s26 #defaults to main_dir
+main_directory: '/nfs/chess/user/seg246/software/development_working_space' # Starting path for detector and materials file, if None this will default to working directory.
+output_directory: '/nfs/chess/user/seg246/software/development_working_space/output' # Path to save all output files, if None this will default to main_directory
 
 input_files:
-  det_file: retiga.yml
-  mat_file: ../../materials-ti7al.h5
-  grain_out_file: /Users/lim37/Library/CloudStorage/OneDrive-LLNL/ti7al_cyclic_HEDM/ti7-1/grains.out
+  detector_file: manta.yml # Your detector file, if full path is not provided, will default to looking in main_directory
+  materials_file: materials.h5 # Your materials file, if full path is not provided, will default to looking in main_directory
+  grains_out_file: '/nfs/chess/aux/cycles/2023-3/id3a/gustafson-1-a/reduced_data/c103-1-ff/output/18/grains.out' # Your grains.out file, if full path is not provided, will default to looking in main_directory
 
 experiment:
-  beam_energy: 61.332
-  mat_name: ti7al
+  # Incoming beam information
+  beam_energy: 88.005 # keV
+  beam_vertical_span: [-0.05, 0.05] # mm
 
-  ome_start: 0.
-  ome_end: 359.75  # degrees
+  # Material information
+  material_name: c103 # Must be a material name stored in your materials file
+  point_group_number: 27 # Note: this is point group not space group - check nfutil for list
+  max_thh: None # Degrees or None - Will clip tth
 
-  max_thh: None #number in degrees or None
+  # Completness and chi^2 thesholds to trim the quality of fitted grains from the grains.out file
+  comp_thresh: 0.8 # Value [0.0 1.0] or None to ignore completness
+  chi2_thresh: 0.05 # Value [0.0 1.0] or None to ignore chi^2
 
-  # optional
-  comp_thresh: 0.8
-  chi2_thresh: 0.05
+  images_and_omegas:
+    # Omega handling - omega edges will be automatically searched for, if they are not found the below start and stop will be used
+      # and an even omega spacing will be generated
+    omega_start: 0.0 # Degrees
+    omega_stop: 360.0  # Degrees
+    shift_images_in_omega: 0 # Integer to shift images postive or negative through omega
 
-  #you really don't want to be doing this... -REL
-  misorientation:
-    use_misorientation: True
-    bnd: 0.0  # degrees
-    spacing: 0.25  # degrees, doesn't matter if bnd is 0
+  # Brute force voxelwise orientation refinement - method not suggested
+  misorientation: # You really don't want to be doing this... -REL
+    use_misorientation: True # Did you mean False?  You probably meant False... -SEG
+    bound: 0.0  # Degrees
+    spacing: 0.25  # Degrees (will not be used if bound = 0.0)
+    # Example: bound = 0.5, spacing = 0.25 will produce [-0.5, -0.25, 0.0, 0.25, 0.5]
+
 tomography:
-  #data_folder: /nfs/chess/raw/2022-1/id3a/voisin-3061-c/s26-1/
+  # If you are running tomography in CHAP then none of this section will be used
+  # Load images and process tomography mask (depreciated version)
   img_stem: nf_
   num_digits: 5
   bright:
@@ -55,52 +66,87 @@ tomography:
     erosion_iter: 1
     dilation_iter: 1
 
+NF_images:
+  # Sample raw data directory - could be of the form: '/nfs/chess/raw/[cycle ID]/[beamline]/BTR/sample'
+  sample_raw_data_folder: '/nfs/chess/raw/2023-3/id3a/gustafson-1-a/c103-1-nf'
 
-images:
-  data_folder: /nfs/chess/raw/2017-2/f2/rollett-628-1/ti7-1/13/nf
-  stem: nf_
-  num_digits: 5
-  img_start: 3885
-  nframes: 1440
+  image_loading:
+    # A metadata file (.par and .json) will be looked for by default
+      # If none is found images will be loaded directly
+    # Metadata Paramters
+    json_and_par_starter: 'id3a-rams2_nf*'
+    target_vertical_position: -0.05 # At what position along the rotation axis was this data taken?  This defines what set of scans is pulled from the metadata.  
+    vertical_motor_name: 'ramsz' # What is the name of the motor used to translate the sample along the rotation axis?
+    
+    # Load images directly
+    data_folders: [13,14,15,16]
+    stem: nf_
+    stem_digits: 5
+    goodstart: 3885
+    nframes_per_folder: 360
+
+  # Image cleaning routine
   processing:
-    num_for_dark: 250  # num images to use for median data
-    img_threshold: 0
-    method:
-      # gaussian:
-      #   sigma: 2.0
-      #   size: 3.0
-      dilations_only:
-        num_erosions: 2 #num iterations of images erosion, don't mess with unless you know what you're doing
-        num_dilations: 3 #num iterations of images erosion, don't mess with unless you know what you're doing
-      # non_local_means:
-      #   patch_size: 3
-      #   patch_distance: 5
-      #   binarization_threshold: 10
-    ome_dilation_iter: 1
-    # binarization_threshold: 5
+    # Dynamic darkfield generation
+    omega_kernel_size: 50 # 10 degs worth of images is a good place to start
+
+    # Global image threshold
+    threshold: 0 # Applied as uint in addition to darkfield
+
+    # Which routine to use - Only the parameters for chosen routine will be pulled
+    routine_choice: 0 # 0 = gaussian blurring, 1 = dilation/errosion, 2 = non-local means, None does not binarize
+    
+    # Gaussian Cleaning Parameters
+    sigma: 2.0 # Larger values begin to rapidly blur images
+    gaussian_binarization_threshold: 3.0 # Images are floats when this is applied
+
+    # Erosion/Dilation Parameters
+    num_errosions: 3 # General practice, num_errosions >= num_dilations
+    num_dilations: 2
+    erosion_dilation_binarization_threshold: 5 # Images are uints when this is applied
+
+    # Non-Local Means Cleaning Parameters
+    patch_size: 3
+    patch_distance: 5
+    NLM_binarization_threshold: 10 # Images are floats when this is applied
+
+    # Small object removal
+    small_object_size: 200 # Number of pixels or None to remove nothing
+
+    # Omega dilation
+    dilate_omega: 0 # 0 or 1 - Dilate the binarized image stack in omega
 
 NF_reconstruction:
   tomography:
-    use_mask: False #True for using tomo, False for not using tomo
-    mask_data_file: ./tomo_mask.npz
-    mask_vert_offset: -0.3 #offset between tomo and nf layer position
-    project_single_layer: False #True projects the center layers through the volume
+    mask_filepath: # Absolute path or leave empty to not use a mask
+    use_single_layer: False # True uses the center mask layer for all vertical positions
+    vertical_motor_position: 0.0 # mm - What is the vertical motor's position?
+  
+  cross_sectional_dimensions: 1.4 # 
+  voxel_spacing: 0.005  # mm - cubic voxel size for reconstruction
+  desired_vertical_span: [-0.0025, 0.0025] # mm - span of vertical space to reconstruct
 
-  cross_sectional_dim: 1.5
-  voxel_spacing: 0.05  #mm, cubic voxel size for reconstruction
-  v_bnds: [0., 0.] #[-0.5, 0.5] #mm, if bounds are equal, a single layer is produced
-
-  beam_stop_y_cen: 0.0  # mm, measured from the origin of the detector paramters
-  beam_stop_width: 0.6  # mm, width of the beam stop vertically
+  beam_stop:
+    beam_stop_filepath: # Path or leave blank to generate beam_stop with parameters
+    # Below parameters will only be used if beam_stop_filepath: None
+    beam_stop_vertical_center: 0.0  # mm - Measured from the origin of the detector paramters
+    beam_stop_vertical_span: 0.3  # mm - Total span of the beam stop vertically
 
 multiprocessing:
-  num_cpus: 1 #number of processors, can use -1 or all
-  # chunksize for multiprocessing, don't mess with unless you know what you're doing
-  chunk_size: 500 # Use -1 if you wish automatic chunk_size calculation
-  RAM_set: True  # if True, manually set max amount of ram
-  max_RAM: 256  # only used if RAM_set is true. in GB
+  num_cpus: half # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
+  chunk_size: -1 # Use -1 if you wish automatic chunk size calculation
+  # RAM_set: True  # if True, manually set max amount of ram
+  # max_RAM: 256  # only used if RAM_set is true. in GB
   # check: None
   # limit: None
   # generate: None
 
+# Do you want plots to show?
 output_plot_check: True
+
+
+
+
+# TODO: 
+# - Threads or cores?  Speed-up due to input/output?
+# - RAM limits

@@ -7,8 +7,8 @@ from hexrd import imageseries
 
 from .config import Config
 from .multiprocessing import MultiprocessingConfig
-from .reconstruction import ReconstructionConfig
-from .images import ImagesConfig
+from .NF_reconstruction import NF_ReconstructionConfig
+from .NF_images import NF_ImagesConfig
 from .experiment import ExperimentConfig
 from .input_files import InputConfig
 from .tomography import TomographyConfig
@@ -21,12 +21,13 @@ class NFRootConfig(Config):
         self._cfg = cfg
         
     @property
-    def main_dir(self):
-        return self._cfg.get('main_dir')
+    def main_directory(self):
+        return self._cfg.get('main_directory')
 
     @property
-    def output_dir(self):
-        return self._cfg.get('output_dir', self.main_dir)
+    def output_directory(self):
+        return self._cfg.get('output_directory', self.main_directory)
+
 
     @property
     def analysis_name(self):
@@ -39,18 +40,18 @@ class NFRootConfig(Config):
     @property
     def multiprocessing(self):
         return MultiprocessingConfig(self)
-
+    
     @property
     def tomography(self):
         return TomographyConfig(self)
 
     @property
     def reconstruction(self):
-        return ReconstructionConfig(self)
+        return NF_ReconstructionConfig(self)
 
     @property
     def images(self):
-        return ImagesConfig(self)
+        return NF_ImagesConfig(self)
 
     @property
     def experiment(self):

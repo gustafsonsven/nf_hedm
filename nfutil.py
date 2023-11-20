@@ -35,6 +35,7 @@ from hexrd.transforms import xfcapi
 from hexrd import valunits
 from hexrd import xrdutil
 from hexrd.sampleOrientations import sampleRFZ
+import nf_config
 
 # Matplotlib
 # This is to allow interactivity of inline plots in your gui
@@ -966,6 +967,14 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
     ncpus = controller.get_process_count()
     # Start a timer
     t0 = timeit.default_timer()
+    # Shoot a warning to the user if they are running with refinment
+    if refine_yes_no == 1:
+        mis_amt = experiment.misorientation_bound_rad # This is the amount of misorientation allowed on one side of the original orientation
+        spacing = experiment.misorientation_step_rad # This is the spacing between orientations
+        ori_pts = np.arange(-mis_amt, (mis_amt+(spacing*0.999)),spacing) # Create a linup of the orientations to go on either side
+        n_oris_refine = ori_pts.shape[0]**3
+        print('Since you are refining ')
+
     # What senario do we have?
     if ncpus == 1 or (n_oris == 1 and n_coords == 1):
         # Single processor variant
@@ -1345,14 +1354,14 @@ def gen_nf_test_grid_vertical(cross_sectional_dim, v_bnds, voxel_spacing):
     return test_crds, n_crds, Xs, Ys, Zs
 
 def generate_test_coordinates(cross_sectional_dim, v_bnds, voxel_spacing,
-                              mask_data_file=None,mask_vert_offset=0.0):
+                              mask_data_file=None,vertical_motor_position=0.0):
     if mask_data_file is not None:
         # Load the mask
         mask_data = np.load(mask_data_file)
 
         mask_full = mask_data['mask']
         Xs_mask = mask_data['Xs']
-        Ys_mask = mask_data['Ys']-(mask_vert_offset)
+        Ys_mask = mask_data['Ys']+(vertical_motor_position)
         Zs_mask = mask_data['Zs']
         voxel_spacing = mask_data['voxel_spacing']
 
@@ -1384,13 +1393,36 @@ def generate_test_coordinates(cross_sectional_dim, v_bnds, voxel_spacing,
 # DATA COLLECTOR FUNCTIONS
 # ===============================================================================
 # Generate the experiment
-def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, comp_thresh, chi2_thresh,omega_edges_deg, 
-                       beam_stop_parms,voxel_spacing, vertical_bounds,misorientation_bnd=0.0, misorientation_spacing=0.25,
-                       cross_sectional_dim=1.3):
+# def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, comp_thresh, chi2_thresh,omega_edges_deg, 
+#                        beam_stop_parms,voxel_spacing, vertical_bounds,misorientation_bnd=0.0, misorientation_spacing=0.25,
+#                        cross_sectional_dim=1.3):
+def generate_experiment(config_filename):
+    # Pull data from the yaml
+    cfg = nf_config.open_file(config_filename)[0]
+
+    analysis_name = cfg.analysis_name # The name you want all your output files to have within thier filename (relevant to the sample)
+    main_directory = cfg.main_directory
+    output_directory = cfg.output_directory
+    output_plot_check = cfg.output_plot_check
+
+    # reconstruction size parameters
+    # TODO: make cross sectional dims changeable
+    cross_sectional_dim = cfg.reconstruction.cross_sectional_dimensions # [1.0,1.0] # mm - [perpendicualr, parallel] to incoming beam direction
+    voxel_spacing = cfg.reconstruction.voxel_spacing
+    beam_vertical_span = cfg.experiment.beam_vertical_span
+    vertical_bounds = cfg.reconstruction.desired_vertical_span
+    tomo_mask = cfg.reconstruction.tomography
+    ncpus = cfg.multiprocessing.num_cpus
+    chunk_size = cfg.multiprocessing.chunk_size
+    #check = cfg.multiprocessing.check
+    #limit = cfg.multiprocessing.limit
+    #generate = cfg.multiprocessing.generate
+    #max_RAM = cfg.multiprocessing.max_RAM  # this is in bytes
+    
     # Load the grains.out data
-    ff_data=np.loadtxt(grain_out_file)
+    ff_data=np.loadtxt(cfg.input_files.grains_out_file)
     # Tell the user what we are doing so they know
-    print(f'Grain data loaded from: {grain_out_file}')
+    print(f'Grain data loaded from: {cfg.input_files.grains_out_file}')
 
     # Unpack grain data
     completeness = ff_data[:,1] # Completness
@@ -1401,6 +1433,8 @@ def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, com
     n_grains_pre_cut = exp_maps.shape[0]
 
     # Trim grain information so that we pull only the grains that we want
+    comp_thresh = cfg.experiment.comp_thresh
+    chi2_thresh = cfg.experiment.chi2_thresh
     cut = np.where(np.logical_and(completeness>comp_thresh,chi2<chi2_thresh))[0]
     exp_maps = exp_maps[cut,:] # Orientations
     t_vec_ds = t_vec_ds[cut,:] # Grain centroid positions
@@ -1410,8 +1444,40 @@ def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, com
     # Tell the user what we are doing so they know
     print(f'{n_grains} grains out of a total {n_grains_pre_cut} found to satisfy completness and chi^2 thresholds.')
 
-    # How many frames do we have?
-    nframes = np.shape(omega_edges_deg)[0] - 1
+    # Load the images
+    images_filename = output_directory + os.sep + analysis_name + '_packaged_images.npy'
+    if os.path.isfile(images_filename):
+        # We have an image stack to load
+        print(f'Images to be loaded from: {images_filename}')
+        image_stack = np.load(images_filename)
+        nframes = np.shape(image_stack)[0]
+    # else:
+        # TODO: Add old image load routine?
+        # nframes = cfg.images.nframes
+
+    # Load the omega edges
+    omega_edges_filename = output_directory + os.sep + analysis_name + '_omega_edges_deg.npy'
+    if os.path.isfile(omega_edges_filename):
+        # Load the omega edges - first value is the starting ome position of first image's slew, last value is the end position of the final image's slew
+        omega_edges_deg = np.load(omega_edges_filename)
+    else:
+        # Define omega edges manually
+        omega_edges_deg = np.linspace(cfg.experiment.omega_start, cfg.experiment.omega_stop, num=nframes+1)
+
+    # Shift in omega positive or negative by X number of images
+    num_img_to_shift = cfg.experiment.shift_images_in_omega
+    if num_img_to_shift > 0:
+        # Moving positive omega so first image is not at zero, but further along
+        # Using the mean omega step size - change if you need to
+        omega_edges_deg = omega_edges_deg + num_img_to_shift*np.mean(np.gradient(omega_edges_deg))
+    elif num_img_to_shift < 0:
+        # For whatever reason the multiprocessor does not like negative numbers, trim the stack
+        image_stack = image_stack[np.abs(num_img_to_shift):,:,:]
+        omega_edges_deg = omega_edges_deg[:num_img_to_shift]
+    # Define omega edges in radians
+    ome_edges = omega_edges_deg*np.pi/180
+
+
     # Define variables in degrees
     # Omega range is the experimental span of omega space
     ome_range_deg = [(omega_edges_deg[0],omega_edges_deg[nframes])]  # Degrees
@@ -1420,18 +1486,21 @@ def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, com
     # Define variables in radians
     ome_period = (ome_period_deg[0]*np.pi/180.,ome_period_deg[1]*np.pi/180.)
     ome_range = [(ome_range_deg[0][0]*np.pi/180.,ome_range_deg[0][1]*np.pi/180.)]
-    # Define omega edges in radians - First value is the ome start position of frame one, last value is the ome end position of final frame
-    ome_edges = omega_edges_deg*np.pi/180
 
     # Load the detector data
-    instr = load_instrument(det_file)
-    print(f'Detector data loaded from: {det_file}')
+    if os.path.isfile(cfg.input_files.detector_file):
+        instr = load_instrument(cfg.input_files.detector_file)
+        print(f'Detector data loaded from: {cfg.input_files.detector_file}')
+    elif os.path.isfile(main_directory + os.sep + cfg.input_files.detector_file):
+        instr = load_instrument(main_directory + os.sep + cfg.input_files.detector_file)
+        print(f'Detector data loaded from: {main_directory + os.sep + cfg.input_files.detector_file}')
+    else:
+        print('No materials file found.')
     panel = next(iter(instr.detectors.values()))
+
     # Sample transformation parameters
     chi = instr.chi
     tVec_s = instr.tvec
-    # Detector transformation parameters
-
     # Some detector tilt information
     # xfcapi.makeRotMatOfExpMap(tilt) = xfcapi.makeDetectorRotMat(rotations.angles_from_rmat_xyz(xfcapi.makeRotMatOfExpMap(tilt))) where tilt are directly read in from the .yaml as a exp_map 
     rMat_d = panel.rmat # Generated by xfcapi.makeRotMatOfExpMap(tilt) where tilt are directly read in from the .yaml as a exp_map 
@@ -1466,24 +1535,37 @@ def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, com
     clip_vals = np.array([ncols, nrows])
 
     # General crystallography data
-    beam_energy = valunits.valWUnit("beam_energy", "energy", instr.beam_energy, "keV")
+    beam_energy = valunits.valWUnit("beam_energy", "energy", cfg.experiment.beam_energy, "keV")
     beam_wavelength = constants.keVToAngstrom(beam_energy.getVal('keV'))
     dmin = valunits.valWUnit("dmin", "length",
                              0.5*beam_wavelength/np.sin(0.5*max_pixel_tth),
                              "angstrom")
 
     # Load the materials file
-    mats = material.load_materials_hdf5(mat_file, dmin=dmin,kev=beam_energy)
-    print(f'{mat_name} material data loaded from: {mat_file}')
-    pd = mats[mat_name].planeData
+    if os.path.isfile(cfg.input_files.materials_file):
+        mats = material.load_materials_hdf5(cfg.input_files.materials_file, dmin=dmin,kev=beam_energy)
+        print(f'{cfg.experiment.material_name} material data loaded from: {cfg.input_files.materials_file}')
+    elif os.path.isfile(main_directory + os.sep + cfg.input_files.materials_file):
+        mats = material.load_materials_hdf5(main_directory + os.sep + cfg.input_files.materials_file, dmin=dmin,kev=beam_energy)
+        print(f'{cfg.experiment.material_name} material data loaded from: {main_directory + os.sep + cfg.input_files.materials_file}')
+    else:
+        print('No materials file found.')
+
+
+    pd = mats[cfg.experiment.material_name].planeData
+
+
     # Check and set the max tth desired or use the detector value
+    max_tth = cfg.experiment.max_tth
     if max_tth is not None:
          pd.tThMax = np.amax(np.radians(max_tth))
     else:
         pd.tThMax = np.amax(max_pixel_tth)
 
-    # Make the beamstop if needed
-    if len(beam_stop_parms) == 2:
+    # Pull the beamstop
+    if len(cfg.reconstruction.beam_stop) == 2:
+        # Load from configuration
+        beam_stop_parms = cfg.reconstruction.beam_stop
         # We need to make a mask out of the parameters
         beam_stop_mask = np.zeros([nrows,ncols],bool)
         # What is the middle position of the beamstop
@@ -1494,6 +1576,15 @@ def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, com
         beam_stop_mask[middle_idx - half_width:middle_idx + half_width,:] = 1
         # Set the mask
         beam_stop_parms = beam_stop_mask
+    else:
+        # Load
+        try:
+            beam_stop_parms = np.load(cfg.reconstruction.beam_stop)
+            print(f'Loaded beam stop mask from: {cfg.reconstruction.beam_stop}')
+        except:
+            beam_stop_parms = np.load(output_directory + os.sep + analysis_name + '_beamstop_mask.npy')
+            print(f'Loaded beam stop mask from: {output_directory + os.sep + analysis_name + "_beamstop_mask.npy"}')
+
 
     # Package up the experiment
     experiment = argparse.Namespace()
@@ -1522,14 +1613,47 @@ def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, com
     experiment.clip_vals = clip_vals
     experiment.bsp = beam_stop_parms
     experiment.mat = mats
-    experiment.misorientation_bound_rad = misorientation_bnd*np.pi/180.
-    experiment.misorientation_step_rad = misorientation_spacing*np.pi/180.
+    experiment.material_name = cfg.experiment.material_name
     experiment.remap = cut
     experiment.vertical_bounds = vertical_bounds
+    experiment.beam_vertical_span = beam_vertical_span
     experiment.cross_sectional_dimensions = cross_sectional_dim
     experiment.voxel_spacing = voxel_spacing
+    experiment.ncpus = ncpus
+    experiment.chunk_size = chunk_size
+    experiment.config_filename = config_filename
+    experiment.analysis_name = analysis_name
+    experiment.main_directory = main_directory
+    experiment.output_directory = output_directory
+    experiment.output_plot_check = output_plot_check
+    experiment.point_group_number = cfg.experiment.point_group_number
 
-    return experiment
+    # Tomo parameters
+    if cfg.reconstruction.tomography is None:
+        experiment.mask_filepath = None
+        experiment.vertical_motor_position = None
+    else:
+        # TODO: Add project through single layer
+        experiment.mask_filepath = cfg.reconstruction.tomography.mask_filepath
+        experiment.vertical_motor_position = cfg.reconstruction.tomography.vertical_motor_position
+
+    if cfg.experiment.misorientation:
+        misorientation_bnd = cfg.experiment.misorientation['misorientation_bnd']
+        misorientation_spacing = cfg.experiment.misorientation['misorientation_spacing']
+        experiment.misorientation_bound_rad = misorientation_bnd*np.pi/180.
+        experiment.misorientation_step_rad = misorientation_spacing*np.pi/180.
+    if tomo_mask:
+        experiment.mask_filepath = tomo_mask['mask_filepath']
+        experiment.vertical_motor_position = tomo_mask['vertical_motor_position']
+        experiment.use_single_layer = tomo_mask['use_single_layer']
+
+
+
+
+
+
+
+    return experiment, image_stack
 
 # Raw data processor
 def process_raw_data(raw_confidence,raw_idx,volume_dims,mask=None,id_remap=None,raw_misorientation=None):
@@ -2768,22 +2892,33 @@ def _filter_and_binarize_image(cleaned_image_stack,filter_parameters,start,stop)
     return binarized_image_stack, start, stop
 
 # Dilation through omega
-def dilate_image_stack(binarized_image_stack):
-    # Start a timer
-    t0 = timeit.default_timer()
-    # Tell the user
-    print('Dilating image stack.')
-    dilated_image_stack = scipy.ndimage.binary_dilation(binarized_image_stack, iterations=1)
-    # How long did it take?
-    t1 = timeit.default_timer()
-    elapsed = t1-t0
-    if elapsed < 60.0:
-        print(f'Dilated image stack in {np.round(elapsed,1)} seconds.')
-    else:
-        print(f'Dilated image stack in {np.round(elapsed/60,1)} minutes.')
+def dilate_image_stack(binarized_image_stack,dilate_omega):
+    if dilate_omega > 0:
+        # Start a timer
+        t0 = timeit.default_timer()
+        # Tell the user
+        print('Dilating image stack.')
+        dilated_image_stack = scipy.ndimage.binary_dilation(binarized_image_stack, iterations=dilate_omega)
+        # How long did it take?
+        t1 = timeit.default_timer()
+        elapsed = t1-t0
+        if elapsed < 60.0:
+            print(f'Dilated image stack in {np.round(elapsed,1)} seconds.')
+        else:
+            print(f'Dilated image stack in {np.round(elapsed/60,1)} minutes.')
 
-    # Return the thing
-    return dilated_image_stack
+        # Return the thing
+        return dilated_image_stack
+    else:
+        print('No dilation asked for, returning binarized image stack.')
+        return binarized_image_stack
+
+def save_image_stack(cfg,image_stack,omega_edges_deg):
+    analysis_name = cfg.analysis_name 
+    output_directory = cfg.output_directory
+    np.save(output_directory + os.sep + analysis_name + '_packaged_images.npy', image_stack)
+    np.save(output_directory + os.sep + analysis_name + '_omega_edges_deg.npy', omega_edges_deg)
+    print("Done saving")
 
 def make_beamstop_mask(raw_image_stack,num_img_for_median,binarization_threshold,errosions,dilations,feature_size_to_remove):
     # Grab the first image

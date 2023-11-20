@@ -1,7 +1,6 @@
 import logging
 import os
 import psutil
-import multiprocessing as mp
 
 from .config import Config
 
@@ -16,12 +15,12 @@ class MultiprocessingConfig(Config):
     @property
     def num_cpus(self):
         # determine number of processes to run in parallel
-        multiproc = self.get('multiprocessing:num_cpus', default=-1)
-        ncpus = mp.cpu_count()
+        multiproc = self.get('multiprocessing:num_cpus', default='half')
+        ncpus = os.cpu_count()
         if multiproc == 'all':
             res = ncpus
         elif multiproc == 'half':
-            temp = ncpus // 2
+            temp = int(ncpus // 2)
             res = temp if temp else 1
         elif isinstance(multiproc, int):
             if multiproc >= 0:
@@ -56,12 +55,12 @@ class MultiprocessingConfig(Config):
     def num_cpus(self, val):
         if val in ('half', 'all', -1):
             self.set('multiprocessing:num_cpus', val)
-        elif (val >= 0 and val <= mp.cpu_count):
+        elif (val >= 0 and val <= os.cpu_count):
             self.set('multiprocessing', int(val))
         else:
             raise RuntimeError(
                 '"num_cpus": must be 1:%d, got %s'
-                % (mp.cpu_count(), val)
+                % (os.cpu_count(), val)
             )
 
     @property
@@ -78,7 +77,7 @@ class MultiprocessingConfig(Config):
 
     @property
     def chunk_size(self):
-        return self._cfg.get('multiprocessing:chunk_size', 500)
+        return self._cfg.get('multiprocessing:chunk_size', -1)
 
     @property
     def max_RAM(self):

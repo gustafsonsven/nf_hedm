@@ -90,35 +90,35 @@ importlib.reload(nfutil) # This reloads the file if you made changes to it
 # COMMON USER INFORMATION - CAN BE EDITED
 # =============================================================================
 # Working directory - could be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample/YOUR FAVORITE BOOKKEEPING STRUCTURE'
-working_directory = '/nfs/chess/user/seg246/software/development_working_space'
+working_directory = '/nfs/chess/aux/reduced_data/cycles/2023-3/id3a/capolungo-3850-a/ti_7/reconstructions/nf/1_strain08'
 
 # Where do you want to drop any output files
 output_directory = working_directory + '/output/'
-output_stem = 'ss718-1nf_layer15' # Something relevant to your sample
+output_stem = 'ti_7_layer_1_strain08' # Something relevant to your sample
 
 # Detector file (retiga, manta,...)
-detector_filepath = working_directory + '/manta.yml'
+detector_filepath = working_directory + '/retiga.yml'
 
 # Materials file - from HEXRDGUI (MAKE SURE YOUR HKLS ARE DEFINED CORRECTLY FOR YOUR MATERIAL)
 materials_filepath = working_directory + '/materials.h5'
 
 # Material name in materials.h5 file from HEXRGUI
-material_name = 'in718_ss'
+material_name = 'ti'
 max_tth = None  # degrees, if None is input max tth will be set by the geometry
 # NOTE: Again, make sure the HKLs are set correctly in the materials file that you loaded
     # If you set max_tth to 20 degrees, but you only have HKLs out to 15 degrees selected
     # then you will only use the selected HKLs out to 15 degrees
 
 # What was the stem you used during image creation via nf_multithreaded_image_processing?
-image_stem = 'ss718-1ff_layer15'
-num_img_to_shift = 0 # Postive moves positive omega, negative moves negative omega, must be integer (if nothing was wrong with your metadata this should be 0)
+image_stem = 'ti_7_layer_1_strain08'
+num_img_to_shift = -1 # Postive moves positive omega, negative moves negative omega, must be integer (if nothing was wrong with your metadata this should be 0)
 
 # Grains.out information
-grains_out_filepath = '/nfs/chess/user/djs522/beamtime_06_2023/ss718-1ff/ss718-1ff_scan_9_1/grains.out'
+grains_out_filepath = '/nfs/chess/aux/reduced_data/cycles/2023-3/id3a/capolungo-3850-a/ti_7/reconstructions/ff/output_files/10/grains.out'
 # Completness threshold - grains with completness GREATER than this value will be used
-completness_threshold = 0.0 # 0.5 is a good place to start
+completness_threshold = 0.25 # 0.5 is a good place to start
 # Chi^2 threshold - grains with Chi^2 LESS than this value will be used
-chi2_threshold = 0.5  # 0.005 is a good place to stay at unless you have good reason to change it
+chi2_threshold = 0.005  # 0.005 is a good place to stay at unless you have good reason to change it
 
 # Tomorgraphy mask information
 # Mask location
@@ -139,7 +139,7 @@ vertical_bounds = [-0.0025, 0.0025] # mm
 # Beam stop details
 use_beam_stop_mask = 0 # If 1, this will ignore the next two parameters and load the mask made by the raw_to_binary_nf_image_processor.py
 beam_stop_y_cen = 0.0  # mm, measured from the origin of the detector paramters
-beam_stop_width = 0.0  # mm, width of the beam stop vertically
+beam_stop_width = 0.3  # mm, width of the beam stop vertically
 
 # Multiprocessing and RAM parameters
 ncpus = 128 # mp.cpu_count() - 10 # Use as many CPUs as are available
@@ -148,8 +148,8 @@ chunk_size = -1 # Use -1 if you wish automatic chunk_size calculation
 # Orientation grid spacing?
 refine_yes_no = 1
 # The grid spacing must be sufficently full to populate the fundamental region, I suggest 1.0 deg
-misorientation_bnd = 1.0  # Refinement bounds on found orientation - in degrees - about half of your ori_grid_spacing
-misorientation_spacing = 0.25  # Step size for orientation refinement - in degrees - orientation resolution of NF is about 0.1 deg
+misorientation_bnd = 0.4  # Refinement bounds on found orientation - in degrees - about half of your ori_grid_spacing
+misorientation_spacing = 0.05  # Step size for orientation refinement - in degrees - orientation resolution of NF is about 0.1 deg
 
 # %% ==========================================================================
 # LOAD IMAGES AND EXPERIMENT - DO NOT EDIT
@@ -211,6 +211,11 @@ nfutil.plot_ori_map(grain_map, confidence_map, Xs, Zs, experiment.exp_maps,
 print('The average confidence map value is: ' + str(np.mean(confidence_map)) +'\n'+
     'The maximum confidence map value is : ' + str(np.max(confidence_map)))
 
+plt.figure()
+plt.imshow(misorientation_map[0,:,:],cmap='jet')
+plt.title('Misorientation (deg)')
+plt.colorbar()
+plt.show()
 # %% ==========================================================================
 # SAVE PROCESSED GRAIN MAP DATA - CAN BE EDITED
 # =============================================================================

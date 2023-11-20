@@ -9,10 +9,10 @@ Note that we need to use the open() builtin in what was formerly the "open()"
 function. So we define the _open(), and then redefine open() to the new
 function.
 """
-open_file = open
+#open_file = open # This method did not work for some reason...
 
 
-def open(file_name=None):
+def open_file(file_name=None):
     """
     Reads configuration settings from a yaml file.
 
@@ -23,7 +23,7 @@ def open(file_name=None):
         print('no filename')
         return [nf_root.NFRootConfig({})]
 
-    with open_file(file_name) as f:
+    with open(file_name) as f:
         print(f)
         res = []
         for cfg in yaml.load_all(f, Loader=yaml.SafeLoader):

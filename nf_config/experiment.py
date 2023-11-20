@@ -15,17 +15,18 @@ class ExperimentConfig(Config):
     @property
     def beam_energy(self):
         return self._cfg.get('experiment:beam_energy')
+    
+    @property
+    def beam_vertical_span(self):
+        return self._cfg.get('experiment:beam_vertical_span')
+    
+    @property
+    def material_name(self):
+        return self._cfg.get('experiment:material_name')
 
     @property
-    def mat_name(self):
-        return self._cfg.get('experiment:mat_name')
-
-    @property
-    def ome_range(self):
-        ome_start = self._cfg.get('experiment:ome_start', 0)
-        ome_end = self._cfg.get('experiment:ome_end', 359.75)
-        ome_range = [(ome_start, ome_end)]
-        return ome_range
+    def point_group_number(self):
+        return self._cfg.get('experiment:point_group_number')
 
     @property
     def max_tth(self):
@@ -54,11 +55,23 @@ class ExperimentConfig(Config):
                 'chi2_thresh must be None or a number between 0 and 1')
 
     @property
+    def omega_start(self):
+        return self._cfg.get('experiment:images_and_omegas:omega_start', 0.0)
+
+    @property
+    def omega_stop(self):
+        return self._cfg.get('experiment:images_and_omegas:omega_stop', 360.0)
+    
+    @property
+    def shift_images_in_omega(self):
+        return self._cfg.get('experiment:images_and_omegas:shift_images_in_omega', 0)
+
+    @property
     def misorientation(self):
         key = self._cfg.get(
             'experiment:misorientation:use_misorientation', False)
         if key is True:
-            parms = dict(misorientation_bnd=self.get('experiment:misorientation:bnd', 0.0),
+            parms = dict(misorientation_bnd=self.get('experiment:misorientation:bound', 0.0),
                          misorientation_spacing=self.get('experiment:misorientation:spacing', 0.25))
             return parms
         else:
