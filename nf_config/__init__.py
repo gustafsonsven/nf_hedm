@@ -24,7 +24,7 @@ def open_file(file_name=None):
         return [nf_root.NFRootConfig({})]
 
     with open(file_name) as f:
-        print(f)
+        print(f'Configuration file loaded from: {file_name}')
         res = []
         for cfg in yaml.load_all(f, Loader=yaml.SafeLoader):
             try:

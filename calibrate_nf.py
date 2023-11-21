@@ -64,6 +64,7 @@ import os
 
 # Hexrd imports
 import nfutil as nfutil
+import nf_config
 import importlib
 importlib.reload(nfutil) # This reloads the file if you made changes to it
 # Matplotlib
@@ -85,14 +86,17 @@ import matplotlib.pyplot as plt
 # %% ==============================================================================
 # FILES TO LOAD -CAN BE EDITED
 # ==============================================================================
-config_fname = '/nfs/chess/user/seg246/software/development/nf_config.yml'
+configuration_filepath = '/nfs/chess/user/seg246/software/development/nf_config.yml'
 
 # %% ==========================================================================
 # LOAD IMAGES AND EXPERIMENT - DO NOT EDIT
 # =============================================================================
+# Go ahead and load the configuration
+configuration = nf_config.open_file(configuration_filepath)[0]
 # Generate the experiment
-experiment, image_stack = nfutil.generate_experiment(config_fname)
-controller = nfutil.build_controller(ncpus=experiment.ncpus, chunk_size=experiment.chunk_size, check=None, generate=None, limit=None)
+experiment, image_stack = nfutil.generate_experiment(configuration)
+# Generate the controller
+controller = nfutil.build_controller(configuration)
 
 # %% ==========================================================================
 # CALIBRATE THE TRANSLATIONS - CAN BE EDITED
@@ -100,7 +104,7 @@ controller = nfutil.build_controller(ncpus=experiment.ncpus, chunk_size=experime
 parameter = 2 # 0=X, 1=Y, 2=Z, 3=RX, 4=RY, 5=RZ, 6=chi
 start = -7 # mm for translations, degrees for rotations
 stop = -5 # mm for translations, degrees for rotations
-steps = 3
+steps = 3 # If set to 0, the current experiment will be tested
 calibration_parameters = [parameter,steps,start,stop]
 experiment = nfutil.calibrate_parameter(experiment,controller,image_stack,calibration_parameters)
 

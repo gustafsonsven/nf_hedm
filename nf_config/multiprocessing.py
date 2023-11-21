@@ -65,15 +65,24 @@ class MultiprocessingConfig(Config):
 
     @property
     def check(self):
-        return self._cfg.get('multiprocessing:check', None)
+        if self._cfg.get('multiprocessing:check') == 'None':
+            return None
+        else:
+            return self._cfg.get('multiprocessing:check', None)
 
     @property
     def limit(self):
-        return self._cfg.get('multiprocessing:limit', None)
+        if self._cfg.get('multiprocessing:limit') == 'None':
+            return None
+        else:
+            return self._cfg.get('multiprocessing:limit', None)
 
     @property
     def generate(self):
-        return self._cfg.get('multiprocessing:generate', None)
+        if self._cfg.get('multiprocessing:generate') == 'None':
+            return None
+        else:
+            return self._cfg.get('multiprocessing:generate', None)
 
     @property
     def chunk_size(self):

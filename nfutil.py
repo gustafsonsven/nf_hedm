@@ -251,9 +251,13 @@ def checking_result_handler(filename):
 
     return CheckingResultHandler(filename)
 
-def build_controller(check=None,generate=None,ncpus=2,chunk_size=-1,limit=None):
+def build_controller(configuration):
     # builds the controller to use based on the args
-
+    ncpus = configuration.multiprocessing.num_cpus
+    chunk_size = configuration.multiprocessing.chunk_size
+    check = configuration.multiprocessing.check
+    generate = configuration.multiprocessing.generate
+    limit = configuration.multiprocessing.limit
     # result handle
     try:
         progress_handler = progressbar_progress_observer()
@@ -1148,7 +1152,7 @@ def load_all_images(filenames,controller):
 
     return raw_image_stack
 
-def remove_median_darkfields(raw_image_stack,controller,median_size_through_omega):
+def remove_median_darkfields(raw_image_stack,controller,configuration):
     """
         Goal: 
             
@@ -1163,10 +1167,13 @@ def remove_median_darkfields(raw_image_stack,controller,median_size_through_omeg
     n_slices = np.shape(raw_image_stack)[2]
     # How many CPUs?
     ncpus = controller.get_process_count()
+    # Pull configuration data
+    median_size_through_omega = configuration.images.processing.omega_kernel_size
+    global_threshold = configuration.images.processing.threshold
     # Single process or multi-thread?
     if ncpus == 1:
         # Just go ahead and load the images
-        print(f'Removing dynamic median dark from {n_slices} slices with a single CPU.')
+        print(f'Subtracting dynamic darkfield from {n_slices} slices with a single CPU.')
         cleaned_image_stack, start, stop = _remove_dynamic_median(raw_image_stack,median_size_through_omega,0,n_slices)
     else:
         # Generate the blank image stack
@@ -1185,7 +1192,7 @@ def remove_median_darkfields(raw_image_stack,controller,median_size_through_omeg
             stops[i] = i*chunk_size + chunk_size
             if stops[i] >= n_slices:
                 stops[i] = n_slices
-        print(f'Removing dynamic median dark from {n_slices} slices with {ncpus} CPUs and {num_chunks} chunks of size {chunk_size}.')
+        print(f'Subtracting dynamic darkfield from {n_slices} slices with {ncpus} CPUs and {num_chunks} chunks of size {chunk_size}.')
         # Package all inputs to the distributor function
         state = (starts,stops,raw_image_stack,median_size_through_omega)
         # Start the multiprocessing loop
@@ -1197,13 +1204,20 @@ def remove_median_darkfields(raw_image_stack,controller,median_size_through_omeg
                 # Clean up
                 del vals1, start, stop
 
+    # Remove the global threshold
+    print('Dynamic darkfield generated and subtracted.')
+    print(f'Subtracting global threshold of {global_threshold}.')
+    mask = cleaned_image_stack<=global_threshold
+    cleaned_image_stack[mask] = 0
+    cleaned_image_stack[~mask] = cleaned_image_stack[~mask] - global_threshold
+
     # How long did it take?
     t1 = timeit.default_timer()
     elapsed = t1-t0
     if elapsed < 60.0:
-        print(f'Removed dynamic median dark from {n_slices} slices in {np.round(elapsed,1)} seconds ({elapsed/n_slices} seconds per slice).')
+        print(f'Subtracted dynamic darkfield and global threshold from {n_slices} slices in {np.round(elapsed,1)} seconds ({elapsed/n_slices} seconds per slice).')
     else:
-        print(f'Removed dynamic median dark from {n_slices} slices in {np.round(elapsed/60,1)} minutes ({elapsed/n_slices} seconds per slice).')
+        print(f'Subtracted dynamic darkfield and global threshold from {n_slices} slices in {np.round(elapsed/60,1)} minutes ({elapsed/n_slices} seconds per slice).')
 
     return cleaned_image_stack
 
@@ -1396,10 +1410,7 @@ def generate_test_coordinates(cross_sectional_dim, v_bnds, voxel_spacing,
 # def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, comp_thresh, chi2_thresh,omega_edges_deg, 
 #                        beam_stop_parms,voxel_spacing, vertical_bounds,misorientation_bnd=0.0, misorientation_spacing=0.25,
 #                        cross_sectional_dim=1.3):
-def generate_experiment(config_filename):
-    # Pull data from the yaml
-    cfg = nf_config.open_file(config_filename)[0]
-
+def generate_experiment(cfg):
     analysis_name = cfg.analysis_name # The name you want all your output files to have within thier filename (relevant to the sample)
     main_directory = cfg.main_directory
     output_directory = cfg.output_directory
@@ -1621,7 +1632,6 @@ def generate_experiment(config_filename):
     experiment.voxel_spacing = voxel_spacing
     experiment.ncpus = ncpus
     experiment.chunk_size = chunk_size
-    experiment.config_filename = config_filename
     experiment.analysis_name = analysis_name
     experiment.main_directory = main_directory
     experiment.output_directory = output_directory
@@ -2693,13 +2703,35 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
                     chi:{yaml_vals[6]}')
         return experiment
     else:
-        print('Not iterating over this variable; iterations set to zero.')
-
+        print('Not iterating over any variable; testing current experiment.')
+        yaml_vals = experiment.detector_params[0:7]
+        yaml_vals[0:3] = rotations.expMapOfQuat(rotations.quatOfRotMat(experiment.rMat_d))
+        print(f'The current values from the .ymal are:\n\
+                  transform:\n\
+                    translation:\n\
+                    - {yaml_vals[3]}\n\
+                    - {yaml_vals[4]}\n\
+                    - {yaml_vals[5]}\n\
+                    tilt:\n\
+                    - {yaml_vals[0]}\n\
+                    - {yaml_vals[1]}\n\
+                    - {yaml_vals[2]}\n\
+                    chi:{yaml_vals[6]}')
+        # Precompute orientaiton information (should need this for all, but it effects only chi?)
+        precomputed_orientation_data = precompute_diffraction_data(experiment,controller,experiment.exp_maps)
+        # Run the test
+        raw_exp_maps, raw_confidence, raw_idx = test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=0)
+        grain_map, confidence_map = process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=None,id_remap=experiment.remap)
+        # Plot
+        plt.figure()
+        plt.imshow(confidence_map[0,:,:],clim=[0,1])
+        plt.title(f'Confidence Map')
+        plt.show(block=False)
 # %% ============================================================================
 # METADATA READERS AND IMAGE PROCESSING
 # ===============================================================================
 # Metadata skimmer function
-def skim_metadata(raw_folder, output_dict=False):
+def skim_metadata(configuration):
     """
     skims all the .josn and .par files in a folder, and returns a concacted
     pandas DataFrame object with duplicates removed. If Dataframe=False, will
@@ -2708,6 +2740,11 @@ def skim_metadata(raw_folder, output_dict=False):
     string. Pandas auto-parses dtypes per-column, and also has
     dictionary-like indexing.
     """
+    # Pull folder name from the configuation
+    nf_raw_folder = configuration.images.loading.sample_raw_data_folder
+    json_and_par_starter = configuration.images.loading.json_and_par_starter
+    raw_folder = nf_raw_folder + os.sep + json_and_par_starter
+
     # Grab all the nf json files, assert they both exist and have par pairs
     f_jsons = glob.glob(raw_folder + "*json")
     assert len(f_jsons) > 0, "No .jsons found in {}".format(raw_folder)
@@ -2726,10 +2763,7 @@ def skim_metadata(raw_folder, output_dict=False):
     # Concactionate into a single dataframe and delete duplicate columns
     meta_df_dups = pd.concat(df_list, axis=1)
     meta_df = meta_df_dups.loc[:, ~meta_df_dups.columns.duplicated()].copy()
-    if output_dict:
-        # convert to dict of dicts if requested
-        return dict(zip(meta_df.keys(), [x[1].to_list() for x in meta_df.iteritems()]))
-    # else, just return
+
     return meta_df
 
 # Image file locations
