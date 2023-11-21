@@ -1407,9 +1407,6 @@ def generate_test_coordinates(cross_sectional_dim, v_bnds, voxel_spacing,
 # DATA COLLECTOR FUNCTIONS
 # ===============================================================================
 # Generate the experiment
-# def generate_experiment(grain_out_file,det_file,mat_file, mat_name, max_tth, comp_thresh, chi2_thresh,omega_edges_deg, 
-#                        beam_stop_parms,voxel_spacing, vertical_bounds,misorientation_bnd=0.0, misorientation_spacing=0.25,
-#                        cross_sectional_dim=1.3):
 def generate_experiment(cfg):
     analysis_name = cfg.analysis_name # The name you want all your output files to have within thier filename (relevant to the sample)
     main_directory = cfg.main_directory
@@ -1484,6 +1481,7 @@ def generate_experiment(cfg):
     elif num_img_to_shift < 0:
         # For whatever reason the multiprocessor does not like negative numbers, trim the stack
         image_stack = image_stack[np.abs(num_img_to_shift):,:,:]
+        nframes = np.shape(image_stack)[0]
         omega_edges_deg = omega_edges_deg[:num_img_to_shift]
     # Define omega edges in radians
     ome_edges = omega_edges_deg*np.pi/180
@@ -2588,7 +2586,7 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
         test_coordinates = test_crds_full[to_use, :]
 
     # Check if we are iterating this variable
-    if iterations > 0:
+    if iterations > 1:
         # Initialize
         count = 0
         confidence_to_plot = np.zeros(iterations)
@@ -2702,6 +2700,69 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
                     - {yaml_vals[2]}\n\
                     chi:{yaml_vals[6]}')
         return experiment
+    elif iterations == 1:
+        # Initialize
+        val = start
+        # Change experiment
+        print(f'Testing {parameter_name} at: {val}')
+        if parameter_number > 2 and parameter_number < 6: 
+            # A translation - update the working_experiment
+            working_experiment.detector_params[parameter_number] = val
+            working_experiment.tVec_d[parameter_number-3] = val
+        elif parameter_number <= 2:
+            # A tilt - update the working_experiment
+            # For user ease, I will have the input parameters in degrees about each axis
+            # Some detector tilt information
+            # xfcapi.makeRotMatOfExpMap(tilt) = xfcapi.makeDetectorRotMat(rotations.angles_from_rmat_xyz(xfcapi.makeRotMatOfExpMap(tilt))) where tilt are directly read in from the .yaml as a exp_map
+            # Grab original rotations
+            xyzp_tilts_deg = np.multiply(rotations.angles_from_rmat_xyz(experiment.rMat_d),180.0/np.pi) # Passive (extrinsic) tilts XYZ
+            # Reset the current value of the desired tilt
+            xyzp_tilts_deg[parameter_number] = val
+            # Define new rMat_d
+            rMat_d = xfcapi.makeDetectorRotMat(np.multiply(xyzp_tilts_deg,np.pi/180.0))
+            # Update the working_experiment
+            working_experiment.rMat_d = rMat_d
+            working_experiment.detector_params[0:3] = np.multiply(xyzp_tilts_deg,np.pi/180.0)
+        else:
+            # Chi angle
+            working_experiment.chi = val*np.pi/180.0
+            working_experiment.detector_params[6] = val*np.pi/180.0
+
+        # Precompute orientaiton information (should need this for all, but it effects only chi?)
+        precomputed_orientation_data = precompute_diffraction_data(working_experiment,controller,experiment.exp_maps)
+        # Run the test
+        raw_exp_maps, raw_confidence, raw_idx = test_orientations_at_coordinates(working_experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=0)
+        grain_map, confidence_map = process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=None,id_remap=experiment.remap)
+        
+        # Pull the sum of the confidence map
+        confidence_to_plot = np.sum(confidence_map)
+        # Plot the new confidence map
+        plt.figure()
+        if parameter_number == 4:
+            plt.imshow(confidence_map[:,:,0],clim=[0,1])
+        else:
+            plt.imshow(confidence_map[0,:,:],clim=[0,1])
+        plt.title(f'Confidence Map with {parameter_name} = {val}')
+        plt.show(block=False)
+
+        # Quick update
+        print(f'{parameter_name} tested at {val}.\n\
+              The experiment has been updated with this value.\n\
+              Update detector file if desired.')
+        yaml_vals = working_experiment.detector_params[0:7]
+        yaml_vals[0:3] = rotations.expMapOfQuat(rotations.quatOfRotMat(working_experiment.rMat_d))
+        print(f'The parameter values tested were:\n\
+                  transform:\n\
+                    translation:\n\
+                    - {yaml_vals[3]}\n\
+                    - {yaml_vals[4]}\n\
+                    - {yaml_vals[5]}\n\
+                    tilt:\n\
+                    - {yaml_vals[0]}\n\
+                    - {yaml_vals[1]}\n\
+                    - {yaml_vals[2]}\n\
+                    chi:{yaml_vals[6]}')
+        return working_experiment
     else:
         print('Not iterating over any variable; testing current experiment.')
         yaml_vals = experiment.detector_params[0:7]
@@ -2727,6 +2788,7 @@ def calibrate_parameter(experiment,controller,image_stack,calibration_parameters
         plt.imshow(confidence_map[0,:,:],clim=[0,1])
         plt.title(f'Confidence Map')
         plt.show(block=False)
+        return experiment
 # %% ============================================================================
 # METADATA READERS AND IMAGE PROCESSING
 # ===============================================================================

@@ -35,8 +35,8 @@ import os
 # HEXRD Imports
 import nfutil as nfutil
 import nf_config
-import importlib
-importlib.reload(nfutil) # This reloads the file if you made changes to it
+# import importlib
+# importlib.reload(nfutil) # This reloads the file if you made changes to it
 
 # Matplotlib
 # This is to allow interactivity of inline plots in your gui
@@ -47,9 +47,9 @@ importlib.reload(nfutil) # This reloads the file if you made changes to it
 import matplotlib
 # The next lines are formatted correctly, no matter what your IDE says
 # For inline, interactive plots (if you use these, make sure to run a plt.close() to prevent crashing)
-%matplotlib widget
+#%matplotlib widget
 # For inline, non-interactive plots
-# %matplotlib inline
+%matplotlib inline
 # For pop out, interactive plots (cannot be used with an SSH tunnel)
 # %matplotlib qt
 import matplotlib.pyplot as plt
@@ -95,7 +95,7 @@ if configuration.output_plot_check:
     img_num = 100
     fig = plt.figure()
     plt.title('Raw Image: ' + str(img_num))
-    plt.imshow(raw_image_stack[img_num,:,:],interpolation='none',clim=[30, 50],cmap='bone')
+    plt.imshow(raw_image_stack[img_num,:,:],interpolation='none',clim=[0, 50],cmap='bone')
     plt.show(block=False)
 # %% ===========================================================================
 # INTENSITY CHECK - DO NOT EDIT
@@ -127,7 +127,7 @@ cleaned_image_stack = nfutil.remove_median_darkfields(raw_image_stack,controller
 # ==============================================================================
 if configuration.output_plot_check:
     fig, axs = plt.subplots(1,2)
-    img_num = 100
+    img_num = 110
     axs[0].imshow(raw_image_stack[img_num,:,:],interpolation='none',clim=[0, 50],cmap='bone')
     axs[1].imshow(cleaned_image_stack[img_num,:,:],interpolation='none',clim=[0, 40],cmap='bone')
     axs[0].title.set_text('Raw Image: ' + str(img_num))
@@ -145,7 +145,7 @@ binarized_image_stack = nfutil.filter_and_binarize_images(cleaned_image_stack,co
 if configuration.output_plot_check:
     fig, axs = plt.subplots(1,2)
     img_num = 100
-    axs[0].imshow(cleaned_image_stack[img_num,:,:],interpolation='none',clim=[0, 50],cmap='bone')
+    axs[0].imshow(cleaned_image_stack[img_num,:,:],interpolation='none',clim=[0, 10],cmap='bone')
     axs[1].imshow(binarized_image_stack[img_num,:,:],interpolation='none',clim=[0, 1],cmap='bone')
     axs[0].title.set_text('Cleaned Image: ' + str(img_num))
     axs[1].title.set_text('Binarized Image: ' + str(img_num))

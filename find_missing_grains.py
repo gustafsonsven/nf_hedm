@@ -83,7 +83,7 @@ import matplotlib.pyplot as plt
 # %% ==============================================================================
 # FILES TO LOAD -CAN BE EDITED
 # ==============================================================================
-config_fname = '/nfs/chess/user/seg246/software/development/nf_config.yml'
+configuration_filename = '/nfs/chess/user/seg246/software/development/nf_config.yml'
 # %% ==========================================================================
 # UNIQUE USER INFORMATION - CAN BE EDITED
 # =============================================================================

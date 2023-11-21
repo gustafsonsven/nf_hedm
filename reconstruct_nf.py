@@ -63,6 +63,7 @@ import numpy as np
 
 # Hexrd imports
 import nfutil as nfutil
+import nf_config
 
 # Matplotlib
 # This is to allow interactivity of inline plots in your gui
@@ -73,9 +74,9 @@ import nfutil as nfutil
 import matplotlib
 # The next lines are formatted correctly, no matter what your IDE says
 # For inline, interactive plots (if you use these, make sure to run a plt.close() to prevent crashing)
-%matplotlib widget
+#%matplotlib widget
 # For inline, non-interactive plots
-# %matplotlib inline
+%matplotlib inline
 # For pop out, interactive plots (cannot be used with an SSH tunnel)
 # %matplotlib qt
 import matplotlib.pyplot as plt
@@ -83,14 +84,17 @@ import matplotlib.pyplot as plt
 # %% ==============================================================================
 # FILES TO LOAD -CAN BE EDITED
 # ==============================================================================
-config_fname = '/nfs/chess/user/seg246/software/development/nf_config.yml'
+configuration_filepath = '/nfs/chess/user/seg246/software/development/nf_config.yml'
 
 # %% ==========================================================================
 # LOAD IMAGES AND EXPERIMENT - DO NOT EDIT
 # =============================================================================
+# Go ahead and load the configuration
+configuration = nf_config.open_file(configuration_filepath)[0]
 # Generate the experiment
-experiment, image_stack = nfutil.generate_experiment(config_fname)
-controller = nfutil.build_controller(ncpus=experiment.ncpus, chunk_size=experiment.chunk_size, check=None, generate=None, limit=None)
+experiment, image_stack = nfutil.generate_experiment(configuration)
+# Generate the controller
+controller = nfutil.build_controller(configuration)
 # %% ===========================================================================
 # LOAD MASK / GENERATE TEST COORDINATES  - NO CHANGES NEEDED
 # ==============================================================================
@@ -110,8 +114,8 @@ grain_map, confidence_map = nfutil.process_raw_data(raw_confidence,raw_idx,Xs.sh
 # %% ==========================================================================
 # Show Images - CAN BE EDITED
 # =============================================================================
-layer_num = 0 # Which layer in Y?
-conf_thresh = 0.1 # If set to None no threshold is used
+layer_num = 3 # Which layer in Y?
+conf_thresh = 0.6 # If set to None no threshold is used
 nfutil.plot_ori_map(grain_map, confidence_map, Xs, Zs, experiment.exp_maps, 
                     layer_num,experiment.mat[experiment.material_name],experiment.remap,conf_thresh)
 # Quick note - nfutil assumes that the IPF reference vector is [0 1 0]

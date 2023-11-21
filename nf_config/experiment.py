@@ -30,7 +30,10 @@ class ExperimentConfig(Config):
 
     @property
     def max_tth(self):
-        return self._cfg.get('experiment:max_tth', None)
+        if self._cfg.get('experiment:max_tth') == 'None':
+            return None
+        else:
+            return self._cfg.get('experiment:max_tth', None)
 
     @property
     def comp_thresh(self):

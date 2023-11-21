@@ -65,8 +65,8 @@ import os
 # Hexrd imports
 import nfutil as nfutil
 import nf_config
-import importlib
-importlib.reload(nfutil) # This reloads the file if you made changes to it
+# import importlib
+# importlib.reload(nfutil) # This reloads the file if you made changes to it
 # Matplotlib
 # This is to allow interactivity of inline plots in your gui
 # the import ipywidgets as widgets line is not needed - however, you do need to run a pip install ipywidgets
@@ -76,9 +76,9 @@ importlib.reload(nfutil) # This reloads the file if you made changes to it
 import matplotlib
 # The next lines are formatted correctly, no matter what your IDE says
 # For inline, interactive plots (if you use these, make sure to run a plt.close() to prevent crashing)
-%matplotlib widget
+#%matplotlib widget
 # For inline, non-interactive plots
-# %matplotlib inline
+%matplotlib inline
 # For pop out, interactive plots (cannot be used with an SSH tunnel)
 # %matplotlib qt
 import matplotlib.pyplot as plt
@@ -102,9 +102,9 @@ controller = nfutil.build_controller(configuration)
 # CALIBRATE THE TRANSLATIONS - CAN BE EDITED
 #==============================================================================
 parameter = 2 # 0=X, 1=Y, 2=Z, 3=RX, 4=RY, 5=RZ, 6=chi
-start = -7 # mm for translations, degrees for rotations
-stop = -5 # mm for translations, degrees for rotations
-steps = 3 # If set to 0, the current experiment will be tested
+start = -5.7 # mm for translations, degrees for rotations
+stop = -5.3 # mm for translations, degrees for rotations
+steps = 5 # If set to 0, the current experiment will be tested, if 1 it will use the start value
 calibration_parameters = [parameter,steps,start,stop]
 experiment = nfutil.calibrate_parameter(experiment,controller,image_stack,calibration_parameters)
 
