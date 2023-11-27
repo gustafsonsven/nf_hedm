@@ -68,14 +68,3 @@ class ExperimentConfig(Config):
     @property
     def shift_images_in_omega(self):
         return self._cfg.get('experiment:images_and_omegas:shift_images_in_omega', 0)
-
-    @property
-    def misorientation(self):
-        key = self._cfg.get(
-            'experiment:misorientation:use_misorientation', False)
-        if key is True:
-            parms = dict(misorientation_bnd=self.get('experiment:misorientation:bound', 0.0),
-                         misorientation_spacing=self.get('experiment:misorientation:spacing', 0.25))
-            return parms
-        else:
-            return

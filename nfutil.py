@@ -1419,7 +1419,6 @@ def generate_experiment(cfg):
     voxel_spacing = cfg.reconstruction.voxel_spacing
     beam_vertical_span = cfg.experiment.beam_vertical_span
     vertical_bounds = cfg.reconstruction.desired_vertical_span
-    tomo_mask = cfg.reconstruction.tomography
     ncpus = cfg.multiprocessing.num_cpus
     chunk_size = cfg.multiprocessing.chunk_size
     #check = cfg.multiprocessing.check
@@ -1504,7 +1503,7 @@ def generate_experiment(cfg):
         instr = load_instrument(main_directory + os.sep + cfg.input_files.detector_file)
         print(f'Detector data loaded from: {main_directory + os.sep + cfg.input_files.detector_file}')
     else:
-        print('No materials file found.')
+        print('No detector file found.')
     panel = next(iter(instr.detectors.values()))
 
     # Sample transformation parameters
@@ -1644,17 +1643,29 @@ def generate_experiment(cfg):
         # TODO: Add project through single layer
         experiment.mask_filepath = cfg.reconstruction.tomography.mask_filepath
         experiment.vertical_motor_position = cfg.reconstruction.tomography.vertical_motor_position
-
-    if cfg.experiment.misorientation:
-        misorientation_bnd = cfg.experiment.misorientation['misorientation_bnd']
-        misorientation_spacing = cfg.experiment.misorientation['misorientation_spacing']
+    
+    # Misorientation
+    if cfg.reconstruction.misorientation:
+        misorientation_bnd = cfg.reconstruction.misorientation['misorientation_bnd']
+        misorientation_spacing = cfg.reconstruction.misorientation['misorientation_spacing']
         experiment.misorientation_bound_rad = misorientation_bnd*np.pi/180.
         experiment.misorientation_step_rad = misorientation_spacing*np.pi/180.
-    if tomo_mask:
-        experiment.mask_filepath = tomo_mask['mask_filepath']
-        experiment.vertical_motor_position = tomo_mask['vertical_motor_position']
-        experiment.use_single_layer = tomo_mask['use_single_layer']
-
+        experiment.refine_yes_no = 1
+    # Tomo mask
+    if cfg.reconstruction.tomography:
+        experiment.mask_filepath = cfg.reconstruction.tomography['mask_filepath']
+        experiment.vertical_motor_position = cfg.reconstruction.tomography['vertical_motor_position']
+        experiment.use_single_layer = cfg.reconstruction.tomography['use_single_layer']
+    
+    if cfg.reconstruction.missing_grains:
+        experiment.reconstructed_data_path = cfg.reconstruction.missing_grains['reconstructed_data_path']
+        experiment.ori_grid_spacing = cfg.reconstruction.missing_grains['ori_grid_spacing']
+        experiment.confidence_threshold = cfg.reconstruction.missing_grains['confidence_threshold']
+        experiment.low_confidence_sparsing = cfg.reconstruction.missing_grains['low_confidence_sparsing']
+        experiment.errode_free_surface = cfg.reconstruction.missing_grains['errode_free_surface']
+        experiment.coord_cutoff_scale = cfg.reconstruction.missing_grains['coord_cutoff_scale']
+        experiment.iter_cutoff = cfg.reconstruction.missing_grains['iter_cutoff']
+        experiment.re_run_and_save = cfg.reconstruction.missing_grains['re_run_and_save']
 
 
 

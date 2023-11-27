@@ -86,107 +86,24 @@ import importlib
 importlib.reload(nfutil) # This reloads the file if you made changes to it
 
 
-# %% ==========================================================================
-# COMMON USER INFORMATION - CAN BE EDITED
-# =============================================================================
-# Working directory - could be of the form: '/nfs/chess/aux/reduced_data/cycles/[cycle ID]/[beamline]/BTR/sample/YOUR FAVORITE BOOKKEEPING STRUCTURE'
-working_directory = '/nfs/chess/aux/reduced_data/cycles/2023-3/id3a/capolungo-3850-a/ti_7/reconstructions/nf/1_strain08'
-
-# Where do you want to drop any output files
-output_directory = working_directory + '/output/'
-output_stem = 'ti_7_layer_1_strain08' # Something relevant to your sample
-
-# Detector file (retiga, manta,...)
-detector_filepath = working_directory + '/retiga.yml'
-
-# Materials file - from HEXRDGUI (MAKE SURE YOUR HKLS ARE DEFINED CORRECTLY FOR YOUR MATERIAL)
-materials_filepath = working_directory + '/materials.h5'
-
-# Material name in materials.h5 file from HEXRGUI
-material_name = 'ti'
-max_tth = None  # degrees, if None is input max tth will be set by the geometry
-# NOTE: Again, make sure the HKLs are set correctly in the materials file that you loaded
-    # If you set max_tth to 20 degrees, but you only have HKLs out to 15 degrees selected
-    # then you will only use the selected HKLs out to 15 degrees
-
-# What was the stem you used during image creation via nf_multithreaded_image_processing?
-image_stem = 'ti_7_layer_1_strain08'
-num_img_to_shift = -1 # Postive moves positive omega, negative moves negative omega, must be integer (if nothing was wrong with your metadata this should be 0)
-
-# Grains.out information
-grains_out_filepath = '/nfs/chess/aux/reduced_data/cycles/2023-3/id3a/capolungo-3850-a/ti_7/reconstructions/ff/output_files/10/grains.out'
-# Completness threshold - grains with completness GREATER than this value will be used
-completness_threshold = 0.25 # 0.5 is a good place to start
-# Chi^2 threshold - grains with Chi^2 LESS than this value will be used
-chi2_threshold = 0.005  # 0.005 is a good place to stay at unless you have good reason to change it
-
-# Tomorgraphy mask information
-# Mask location
-mask_filepath = '/nfs/chess/aux/reduced_data/cycles/2023-2/id3a/shanks-3731-a/ti-13-exsitu/tomo/coarse_tomo_mask.npz' # If you have no mask set mask_filepath = None
-# Vertical offset: this is generally the difference in y motor positions between the tomo and nf layer (tomo_motor_z-nf_motor_z), needed for registry
-mask_vertical_offset = -(-0.0) # mm
-
-# If no tomography is used (use_mask=False) we will generate a square test grid
-# Cross sectional to reconstruct (should be at least 20%-30% over sample width)
-cross_sectional_dimensions = 1.3 # Side length of the cross sectional region to probe (mm)
-voxel_spacing = 0.005 # in mm, voxel spacing for the near field reconstruction
-
-# Vertical (y) reconstruction voxel bounds in mm, ALWAYS USED REGARDLESS OF TOMOGRAPHY
-# If bounds are equal, a single layer is produced
-# Suggestion: set v_bounds to cover exactly the voxel_spacing when calibrating
-vertical_bounds = [-0.0025, 0.0025] # mm 
-
-# Beam stop details
-use_beam_stop_mask = 0 # If 1, this will ignore the next two parameters and load the mask made by the raw_to_binary_nf_image_processor.py
-beam_stop_y_cen = 0.0  # mm, measured from the origin of the detector paramters
-beam_stop_width = 0.3  # mm, width of the beam stop vertically
-
-# Multiprocessing and RAM parameters
-ncpus = 128 # mp.cpu_count() - 10 # Use as many CPUs as are available
-chunk_size = -1 # Use -1 if you wish automatic chunk_size calculation
-
-# Orientation grid spacing?
-refine_yes_no = 1
-# The grid spacing must be sufficently full to populate the fundamental region, I suggest 1.0 deg
-misorientation_bnd = 0.4  # Refinement bounds on found orientation - in degrees - about half of your ori_grid_spacing
-misorientation_spacing = 0.05  # Step size for orientation refinement - in degrees - orientation resolution of NF is about 0.1 deg
+# %% ==============================================================================
+# FILES TO LOAD -CAN BE EDITED
+# ==============================================================================
+configuration_filepath = '/nfs/chess/user/seg246/software/development/nf_config.yml'
 
 # %% ==========================================================================
 # LOAD IMAGES AND EXPERIMENT - DO NOT EDIT
 # =============================================================================
-print('Loading the image stack...')
-# Load the cleaned image stack from the first script
-image_stack = np.load(output_directory + os.sep + image_stem + '_binarized_images.npy')
-# Load the omega edges - first value is the starting ome position of first image's slew, last value is the end position of the final image's slew
-omega_edges_deg = np.load(output_directory + os.sep + image_stem + '_omega_edges_deg.npy')
-# Load/make the beamstop where 1s indicate non-intensity-counting pixels
-if use_beam_stop_mask == 1:
-    # Load from file
-    beam_stop_parms = np.load(output_directory + os.sep + image_stem + '_beamstop_mask.npy')
-else:
-    # Generate
-    beam_stop_parms = np.array([beam_stop_y_cen, beam_stop_width])
-# Shift in omega positive or negative by X number of images
-if num_img_to_shift > 0:
-    # Moving positive omega so first image is not at zero, but further along
-    # Using the mean omega step size - change if you need to
-    omega_edges_deg = omega_edges_deg + num_img_to_shift*np.mean(np.gradient(omega_edges_deg))
-elif num_img_to_shift < 0:
-    # For whatever reason the multiprocessor does not like negative numbers, trim the stack
-    image_stack = image_stack[np.abs(num_img_to_shift):,:,:]
-    omega_edges_deg = omega_edges_deg[:num_img_to_shift]
-print('Image stack loaded.')
-
+# Go ahead and load the configuration
+configuration = nf_config.open_file(configuration_filepath)[0]
 # Generate the experiment
-experiment = nfutil.generate_experiment(grains_out_filepath, detector_filepath, materials_filepath, material_name, 
-                                        max_tth,completness_threshold, chi2_threshold,omega_edges_deg,
-                                        beam_stop_parms,voxel_spacing,vertical_bounds,cross_sectional_dim=cross_sectional_dimensions,
-                                        misorientation_bnd=misorientation_bnd, misorientation_spacing=misorientation_spacing)
-controller = nfutil.build_controller(ncpus=ncpus, chunk_size=chunk_size, check=None, generate=None, limit=None)
+experiment, image_stack = nfutil.generate_experiment(configuration)
+# Generate the controller
+controller = nfutil.build_controller(configuration)
 # %% ===========================================================================
 # LOAD MASK / GENERATE TEST COORDINATES  - NO CHANGES NEEDED
 # ==============================================================================
-Xs, Ys, Zs, mask, test_coordinates = nfutil.generate_test_coordinates(experiment.cross_sectional_dimensions, experiment.vertical_bounds, voxel_spacing,mask_data_file=mask_filepath,mask_vert_offset=mask_vertical_offset)
+Xs, Ys, Zs, mask, test_coordinates = nfutil.generate_test_coordinates(experiment.cross_sectional_dimensions, experiment.vertical_bounds, experiment.voxel_spacing,mask_data_file=experiment.mask_filepath,vertical_motor_position=experiment.vertical_motor_position)
 
 # %% ==========================================================================
 # PRECOMPUTE ORIENTATION DATA
@@ -196,7 +113,7 @@ precomputed_orientation_data = nfutil.precompute_diffraction_data(experiment,con
 # %% ==========================================================================
 # TEST ORIENTATIONS AND PROCESS OUTPUT
 # =============================================================================
-raw_exp_maps, raw_confidence, raw_idx, raw_misorientation = nfutil.test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=refine_yes_no,return_misorientation=1)
+raw_exp_maps, raw_confidence, raw_idx, raw_misorientation = nfutil.test_orientations_at_coordinates(experiment,controller,image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=experiment.refine_yes_no,return_misorientation=1)
 grain_map, confidence_map, misorientation_map = nfutil.process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=mask,id_remap=experiment.remap,raw_misorientation=raw_misorientation)
 
 # %% ==========================================================================
@@ -205,7 +122,7 @@ grain_map, confidence_map, misorientation_map = nfutil.process_raw_data(raw_conf
 layer_num = 0 # Which layer in Y?
 conf_thresh = 0.4 # If set to None no threshold is used
 nfutil.plot_ori_map(grain_map, confidence_map, Xs, Zs, experiment.exp_maps, 
-                    layer_num,experiment.mat[material_name],experiment.remap,conf_thresh)
+                    layer_num,experiment.mat[experiment.material_name],experiment.remap,conf_thresh)
 # Quick note - nfutil assumes that the IPF reference vector is [0 1 0]
 # Print out the average and max confidence
 print('The average confidence map value is: ' + str(np.mean(confidence_map)) +'\n'+
@@ -219,15 +136,15 @@ plt.show()
 # %% ==========================================================================
 # SAVE PROCESSED GRAIN MAP DATA - CAN BE EDITED
 # =============================================================================
-nfutil.save_nf_data(output_directory, output_stem, grain_map, confidence_map,
+nfutil.save_nf_data(experiment.output_directory, experiment.analysis_name, grain_map, confidence_map,
                     Xs, Ys, Zs, experiment.exp_maps, tomo_mask=mask, id_remap=experiment.remap,
                     save_type=['npz']) # Can be npz or hdf5
 
 # %% ==========================================================================
 # SAVE PROCESSED GRAIN MAP DATA WITH IPF COLORS - CAN BE EDITED
 # =============================================================================
-nfutil.save_nf_data_for_paraview(output_directory,output_stem,grain_map,confidence_map,Xs,Ys,Zs,
-                             experiment.exp_maps,experiment.mat[material_name], tomo_mask=mask,
+nfutil.save_nf_data_for_paraview(experiment.output_directory, experiment.analysis_name,grain_map,confidence_map,Xs,Ys,Zs,
+                             experiment.exp_maps,experiment.mat[experiment.material_name], tomo_mask=mask,
                              id_remap=experiment.remap,misorientation_map=misorientation_map)
 # Quick note - nfutil assumes that the IPF reference vector is [0 1 0]
 

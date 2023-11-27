@@ -32,13 +32,6 @@ experiment:
     omega_stop: 360.0  # Degrees
     shift_images_in_omega: -1 # Integer to shift images postive or negative through omega
 
-  # Brute force voxelwise orientation refinement - method not suggested
-  misorientation: # You really don't want to be doing this... -REL
-    use_misorientation: False # Did you mean False?  You probably meant False... -SEG
-    bound: 0.0  # Degrees
-    spacing: 0.25  # Degrees (will not be used if bound = 0.0)
-    # Example: bound = 0.5, spacing = 0.25 will produce [-0.5, -0.25, 0.0, 0.25, 0.5]
-
 tomography:
   # If you are running tomography in CHAP then none of this section will be used
   # Load images and process tomography mask (depreciated version)
@@ -133,6 +126,31 @@ NF_reconstruction:
     # Below parameters will only be used if beam_stop_filepath: None
     beam_stop_vertical_center: 0.0  # mm - Measured from the origin of the detector paramters
     beam_stop_vertical_span: 0.3  # mm - Total span of the beam stop vertically
+
+  # Brute force voxelwise orientation refinement - method not suggested
+  # Set to true for missing grains, bound should be about half the orientation spacing
+  misorientation: # You really don't want to be doing this... -REL
+    use_misorientation: True # Did you mean False?  You probably meant False... -SEG
+    bound: 0.6  # Degrees
+    spacing: 0.1  # Degrees (will not be used if bound = 0.0)
+    # Example: bound = 0.5, spacing = 0.25 will produce [-0.5, -0.25, 0.0, 0.25, 0.5]
+  
+  missing_grains:
+    # Data path to .npz of reconstructed data
+    reconstructed_data_path: '/your/path/here/sample_reconstruction.npz'
+    # Spacing between orientations used in serach
+    ori_grid_spacing: 1.0 # Degrees - 1.0 is a good place to start
+    # Where to look for new grains?
+    confidence_threshold: 0.6 # Anything less than this will be looked at for new grains
+    low_confidence_sparsing: 0 # 0 will take all voxels, 1 will take about half, 2 about a quarter - uses a sparse regular grid - Up to you, 0 has the best chance of finding all missing grains
+    errode_free_surface: 1 # NF is poor at the surface already, removes the free surface of your tomo mask from the search space - 1 is suggested
+    # Define a cutoff value for when to switch to a brute force
+    coord_cutoff_scale: 0.15 # Once we only have coord_cutoff_scale*100 % voxels left to look at we transition to brute search of each voxel - its quicker - 0.15 is good
+    iter_cutoff: 10 # If we don't find a grain after iter_cutoff iterations we break and go straight to searching all voxels - 10 is good but you may need more if you have a poor starting reconstruction
+    # Re-rerun and save reconstruction
+    re_run_and_save: 1 # If 1 this will re-run the full reconstruction with all grains and save an npz + paraview file (else put 0)
+    
+  
 
 multiprocessing:
   num_cpus: half # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]

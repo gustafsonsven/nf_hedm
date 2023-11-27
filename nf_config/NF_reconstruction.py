@@ -43,3 +43,30 @@ class NF_ReconstructionConfig(Config):
             parms = [self._cfg.get('NF_reconstruction:beam_stop:beam_stop_vertical_center', 0.0),
                          self._cfg.get('NF_reconstruction:beam_stop:beam_stop_vertical_span', 0.3)]
             return parms
+    
+    @property
+    def misorientation(self):
+        key = self._cfg.get(
+            'experiment:misorientation:use_misorientation', False)
+        if key is True:
+            parms = dict(misorientation_bnd=self.get('experiment:misorientation:bound', 0.0),
+                         misorientation_spacing=self.get('experiment:misorientation:spacing', 0.25))
+            return parms
+        else:
+            return
+        
+    @property
+    def missing_grains(self):
+        key = self._cfg.get('NF_reconstruction:tomography:mask_filepath', None)
+        if key is not None:
+            parms = dict(reconstructed_data_path = 'NF_reconstruction:missing_grains:reconstructed_data_path',
+                         ori_grid_spacing = 'NF_reconstruction:missing_grains:ori_grid_spacing',
+                         confidence_threshold = 'NF_reconstruction:missing_grains:confidence_threshold',
+                         low_confidence_sparsing = 'NF_reconstruction:missing_grains:low_confidence_sparsing',
+                         errode_free_surface = 'NF_reconstruction:missing_grains:errode_free_surface',
+                         coord_cutoff_scale = 'NF_reconstruction:missing_grains:coord_cutoff_scale',
+                         iter_cutoff = 'NF_reconstruction:missing_grains:iter_cutoff',
+                         re_run_and_save = 'NF_reconstruction:missing_grains:re_run_and_save')
+            return parms
+        else:
+            return None
