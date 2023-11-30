@@ -118,8 +118,8 @@ NF_reconstruction:
     vertical_motor_position: 0.0 # mm - What is the vertical motor's position?
   
   cross_sectional_dimensions: 1.4 # mm 
-  voxel_spacing: 0.002  # mm - cubic voxel size for reconstruction
-  desired_vertical_span: [-0.05, 0.05] # mm - span of vertical space to reconstruct
+  voxel_spacing: 0.01  # mm - cubic voxel size for reconstruction
+  desired_vertical_span: [-0.005, 0.005] # mm - span of vertical space to reconstruct
 
   beam_stop:
     beam_stop_filepath: # Path or leave blank to generate beam_stop with parameters
@@ -134,12 +134,16 @@ NF_reconstruction:
     bound: 0.6  # Degrees
     spacing: 0.1  # Degrees (will not be used if bound = 0.0)
     # Example: bound = 0.5, spacing = 0.25 will produce [-0.5, -0.25, 0.0, 0.25, 0.5]
+
+  # Grain centroid cuttoff for serach
+  centroid_serach_radius: 0.2 # mm
+  expand_radius_confidence_threshold: 0.6
   
   missing_grains:
     # Data path to .npz of reconstructed data
     reconstructed_data_path: '/your/path/here/sample_reconstruction.npz'
     # Spacing between orientations used in serach
-    ori_grid_spacing: 1.0 # Degrees - 1.0 is a good place to start
+    ori_grid_spacing: 4.0 # Degrees - 1.0 is a good place to start
     # Where to look for new grains?
     confidence_threshold: 0.6 # Anything less than this will be looked at for new grains
     low_confidence_sparsing: 0 # 0 will take all voxels, 1 will take about half, 2 about a quarter - uses a sparse regular grid - Up to you, 0 has the best chance of finding all missing grains

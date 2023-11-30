@@ -57,16 +57,25 @@ class NF_ReconstructionConfig(Config):
         
     @property
     def missing_grains(self):
-        key = self._cfg.get('NF_reconstruction:tomography:mask_filepath', None)
+        key = self._cfg.get('NF_reconstruction:missing_grains', None)
         if key is not None:
-            parms = dict(reconstructed_data_path = 'NF_reconstruction:missing_grains:reconstructed_data_path',
-                         ori_grid_spacing = 'NF_reconstruction:missing_grains:ori_grid_spacing',
-                         confidence_threshold = 'NF_reconstruction:missing_grains:confidence_threshold',
-                         low_confidence_sparsing = 'NF_reconstruction:missing_grains:low_confidence_sparsing',
-                         errode_free_surface = 'NF_reconstruction:missing_grains:errode_free_surface',
-                         coord_cutoff_scale = 'NF_reconstruction:missing_grains:coord_cutoff_scale',
-                         iter_cutoff = 'NF_reconstruction:missing_grains:iter_cutoff',
-                         re_run_and_save = 'NF_reconstruction:missing_grains:re_run_and_save')
+            parms = dict(reconstructed_data_path = self._cfg.get('NF_reconstruction:missing_grains:reconstructed_data_path'),
+                         ori_grid_spacing = self._cfg.get('NF_reconstruction:missing_grains:ori_grid_spacing'),
+                         confidence_threshold = self._cfg.get('NF_reconstruction:missing_grains:confidence_threshold'),
+                         low_confidence_sparsing = self._cfg.get('NF_reconstruction:missing_grains:low_confidence_sparsing'),
+                         errode_free_surface = self._cfg.get('NF_reconstruction:missing_grains:errode_free_surface'),
+                         coord_cutoff_scale = self._cfg.get('NF_reconstruction:missing_grains:coord_cutoff_scale'),
+                         iter_cutoff = self._cfg.get('NF_reconstruction:missing_grains:iter_cutoff'),
+                         re_run_and_save = self._cfg.get('NF_reconstruction:missing_grains:re_run_and_save'))
             return parms
         else:
             return None
+
+    @property
+    def centroid_serach_radius(self):
+        return self._cfg.get('NF_reconstruction:centroid_serach_radius')
+    
+    @property
+    def expand_radius_confidence_threshold(self):
+        return self._cfg.get('NF_reconstruction:expand_radius_confidence_threshold')
+        

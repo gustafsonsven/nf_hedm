@@ -114,8 +114,8 @@ grain_map, confidence_map = nfutil.process_raw_data(raw_confidence,raw_idx,Xs.sh
 # %% ==========================================================================
 # Show Images - CAN BE EDITED
 # =============================================================================
-layer_num = 3 # Which layer in Y?
-conf_thresh = 0.6 # If set to None no threshold is used
+layer_num = 0 # Which layer in Y?
+conf_thresh = 0.0 # If set to None no threshold is used
 nfutil.plot_ori_map(grain_map, confidence_map, Xs, Zs, experiment.exp_maps, 
                     layer_num,experiment.mat[experiment.material_name],experiment.remap,conf_thresh)
 # Quick note - nfutil assumes that the IPF reference vector is [0 1 0]

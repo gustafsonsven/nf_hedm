@@ -635,16 +635,39 @@ def _test_many_orientations_at_single_coordinate(experiment,image_stack,coord_to
 
     # Check each orientation at the coordinate point
     for i in np.arange(n_oris):
-        # Grab orientation information
-        angles = all_angles[i]
-        rMat_ss = all_rMat_ss[i]
-        gvec_cs = all_gvec_cs[i]
-        rMat_c = all_rMat_c[i]
-        # Find intercept point of each g-vector on the detector
-        det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test) # Convert angles to xy detector positions
-        # Check detector positions and omega values to see if intensity exisits
-        all_confidence[i] = _quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
-                                        base, inv_deltas, clip_vals, bsp, ome_edges)
+        # Check for centroid position
+        if np.linalg.norm(coord_to_test - experiment.t_vec_s[i,:]) <= experiment.centroid_serach_radius:
+            # We are close enough, test the orientation
+            # Grab orientation information
+            angles = all_angles[i]
+            rMat_ss = all_rMat_ss[i]
+            gvec_cs = all_gvec_cs[i]
+            rMat_c = all_rMat_c[i]
+            # Find intercept point of each g-vector on the detector
+            det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test) # Convert angles to xy detector positions
+            # Check detector positions and omega values to see if intensity exisits
+            all_confidence[i] = _quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
+                                            base, inv_deltas, clip_vals, bsp, ome_edges)
+        else:
+            # Not close enough ignore
+            all_confidence[i] = 0
+
+    if np.max(all_confidence) < experiment.expand_radius_confidence_threshold:
+        # We did not find the grain we needed close enough, open up the serach bounds
+        # Check each orientation at the coordinate point
+        for i in np.arange(n_oris):
+            # We are close enough, test the orientation
+            # Grab orientation information
+            angles = all_angles[i]
+            rMat_ss = all_rMat_ss[i]
+            gvec_cs = all_gvec_cs[i]
+            rMat_c = all_rMat_c[i]
+            # Find intercept point of each g-vector on the detector
+            det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test) # Convert angles to xy detector positions
+            # Check detector positions and omega values to see if intensity exisits
+            all_confidence[i] = _quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
+                                            base, inv_deltas, clip_vals, bsp, ome_edges)
+
 
     # Find the index of the max confidence
     idx = np.where(all_confidence == np.max(all_confidence))[0][0] # Grab just the first instance if there is a tie
@@ -683,6 +706,7 @@ def _test_many_orientations_at_many_coordinates(experiment,image_stack,coordinat
         for i in np.arange(n_coords):
             coord_to_test = coordinates_to_test[i,:]
             if n_oris == 1:
+                # There is only one orientation, don't check centroid position
                 exp_map, confidence, dummy = _test_single_orientation_at_single_coordinate(experiment,image_stack,coord_to_test,orientation_data_to_test)
                 idx = 0
             else:
@@ -710,9 +734,28 @@ def _test_many_orientations_at_many_coordinates(experiment,image_stack,coordinat
         for i in np.arange(n_oris):
             orientation_data_to_test = [test_exp_maps[i], test_angles[i], test_rMat_ss[i], test_gvec_cs[i], test_rMat_c[i]]
             if n_coords == 1:
-                exp_maps, confidence, dummy = _test_single_orientation_at_single_coordinate(experiment,image_stack,coordinates_to_test,orientation_data_to_test)
+                # Check for centroid position
+                if np.linalg.norm(coord_to_test - experiment.t_vec_s[start+i,:]) <= experiment.centroid_serach_radius:
+                    # We are close enough, run the test
+                    exp_maps, confidence, dummy = _test_single_orientation_at_single_coordinate(experiment,image_stack,coordinates_to_test,orientation_data_to_test)
+                else:
+                    # Not close enough, ignore and move on
+                    exp_maps = test_exp_maps[i]
+                    confidence = 0
+                    dummy = 0
             else:
+                # Create mask of which coords to test
+                test_these_coords = np.linalg.norm(coordinates_to_test - experiment.t_vec_s[start+i,:],axis=1) <= experiment.centroid_serach_radius
+                coordinates_to_test_full = coordinates_to_test
+                coordinates_to_test = coordinates_to_test[test_these_coords]
                 exp_maps, confidence = _test_single_orientation_at_many_coordinates(experiment,image_stack,coordinates_to_test,orientation_data_to_test)
+                exp_maps_full = np.zeros([n_coords,3])
+                confidence_full = np.zeros(n_coords)
+                exp_maps_full[test_these_coords] = exp_maps
+                confidence_full[test_these_coords] = confidence
+                exp_maps = exp_maps_full
+                confidence = confidence_full
+                coordinates_to_test = coordinates_to_test_full
             # Replace any which are better than before
             to_replace = confidence > all_confidence
             all_exp_maps[to_replace,:] = exp_maps[to_replace]
@@ -1075,6 +1118,66 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
             pool.close()
             pool.join()
 
+            # We may have coordinates which have not found thier grain if the serach radius was too small
+            # Flag those we need to look at
+            coords_to_retest = all_confidence < experiment.expand_radius_confidence_threshold
+            n_coords_to_retest = np.sum(coords_to_retest)
+            chunk_size = controller.get_chunk_size()
+            if chunk_size == -1:
+                chunk_size = int(np.ceil(n_oris/ncpus))
+            # Create chunking
+            num_chunks = int(np.ceil(n_oris/chunk_size))
+            chunks = np.arange(num_chunks)
+            starts = np.zeros(num_chunks,dtype=int)
+            stops = np.zeros(num_chunks,dtype=int)
+            for i in np.arange(num_chunks):
+                starts[i] = i*chunk_size
+                stops[i] = i*chunk_size + chunk_size
+                if stops[i] >= n_oris:
+                    stops[i] = n_oris
+            # Tell the user about the chunking
+            print(f'The {ncpus} CPUs will tackle {num_chunks} chunks with {chunk_size} orientations to re-test at the {n_coords_to_retest} coordinate points.')
+            # Initialize arrays to drop the exp_map and confidence
+            retest_exp_maps = np.zeros([n_coords_to_retest,3])
+            retest_confidence = np.zeros(n_coords_to_retest)
+            retest_idx = np.zeros(n_coords_to_retest)
+            retest_misorientation = np.zeros(n_coords_to_retest)
+            # Generate a working_experiment with a very large centroid_serach_radius
+            working_experiment = experiment
+            working_experiment.centroid_serach_radius = 1000 #mm
+            # Package all inputs to the distributor function
+            state = (starts,stops,working_experiment,image_stack,coordinates_to_test,orientation_data_to_test,refine_yes_no)
+            # Start the multiprocessing loop
+            set_multiprocessing_method(controller.multiprocessing_start_method)
+            chunk_num = 0
+            with multiprocessing_pool(ncpus,state) as pool:
+                for vals1, vals2, vals3, vals4, start, stop in pool.imap_unordered(_test_many_orientations_at_many_coordinates_distributor,chunks):
+                    # Grab the data as each CPU drops it
+                    # Replace any which are better than before
+                    to_replace = vals2 > retest_confidence
+                    retest_exp_maps[to_replace,:] = vals1[to_replace]
+                    retest_confidence[to_replace] = vals2[to_replace]
+                    retest_idx[to_replace] = vals3[to_replace]
+                    retest_misorientation[to_replace] = vals4[to_replace]
+                    # Clean up
+                    chunk_num = chunk_num + 1
+                    del vals1, vals2, vals3, vals4, start, stop
+            # Final cleanup
+            pool.close()
+            pool.join()
+            #print(retest_confidence-all_confidence[coords_to_retest])
+            #print(retest_confidence)
+            all_exp_maps[coords_to_retest] = retest_exp_maps
+            all_confidence[coords_to_retest] = retest_confidence
+            all_idx[coords_to_retest] = retest_idx
+            all_misorientation[coords_to_retest] = retest_misorientation
+
+
+
+
+
+
+
     # How long did it take?
     t1 = timeit.default_timer()
     elapsed = t1-t0
@@ -1435,7 +1538,7 @@ def generate_experiment(cfg):
     completeness = ff_data[:,1] # Completness
     chi2 = ff_data[:,2] # Chi^2
     exp_maps = ff_data[:,3:6] # Orientations
-    t_vec_ds = ff_data[:,6:9] # Grain centroid positions
+    t_vec_s = ff_data[:,6:9] # Grain centroid positions
     # How many grains do we have total?
     n_grains_pre_cut = exp_maps.shape[0]
 
@@ -1444,7 +1547,7 @@ def generate_experiment(cfg):
     chi2_thresh = cfg.experiment.chi2_thresh
     cut = np.where(np.logical_and(completeness>comp_thresh,chi2<chi2_thresh))[0]
     exp_maps = exp_maps[cut,:] # Orientations
-    t_vec_ds = t_vec_ds[cut,:] # Grain centroid positions
+    t_vec_s = t_vec_s[cut,:] # Grain centroid positions
 
     # How many grains do we have after the cull?
     n_grains = exp_maps.shape[0]
@@ -1634,6 +1737,9 @@ def generate_experiment(cfg):
     experiment.output_directory = output_directory
     experiment.output_plot_check = output_plot_check
     experiment.point_group_number = cfg.experiment.point_group_number
+    experiment.t_vec_s = t_vec_s
+    experiment.centroid_serach_radius = cfg.reconstruction.centroid_serach_radius
+    experiment.expand_radius_confidence_threshold = cfg.reconstruction.expand_radius_confidence_threshold
 
     # Tomo parameters
     if cfg.reconstruction.tomography is None:
@@ -1666,6 +1772,8 @@ def generate_experiment(cfg):
         experiment.coord_cutoff_scale = cfg.reconstruction.missing_grains['coord_cutoff_scale']
         experiment.iter_cutoff = cfg.reconstruction.missing_grains['iter_cutoff']
         experiment.re_run_and_save = cfg.reconstruction.missing_grains['re_run_and_save']
+
+        
 
 
 
