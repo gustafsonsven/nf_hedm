@@ -19,7 +19,7 @@ class ExperimentConfig(Config):
     @property
     def beam_vertical_span(self):
         return self._cfg.get('experiment:beam_vertical_span')
-    
+
     @property
     def material_name(self):
         return self._cfg.get('experiment:material_name')

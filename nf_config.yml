@@ -1,10 +1,10 @@
 analysis_name: ti_sample_7 # The name you want all your output files to have within thier filename (relevant to the sample)
 
-main_directory: '/nfs/chess/user/seg246/software/development_working_space/nf_workflow' # Starting path for detector and materials file, if None this will default to working directory.
-output_directory: '/nfs/chess/user/seg246/software/development_working_space/nf_workflow/output' # Path to save all output files, if None this will default to main_directory
+main_directory: '/nfs/chess/user/seg246/software/development_working_space/' # Starting path for detector and materials file, if None this will default to working directory.
+output_directory: '/nfs/chess/scratch/user/seg246/development_working_space/output' # Path to save all output files, if None this will default to main_directory
 
 input_files:
-  detector_file: retiga.yml # Your detector file, if full path is not provided, will default to looking in main_directory
+  detector_file: retiga_capolungo-3850-a.yml # Your detector file, if full path is not provided, will default to looking in main_directory
   materials_file: materials.h5 # Your materials file, if full path is not provided, will default to looking in main_directory
   grains_out_file: '/nfs/chess/aux/cycles/2023-3/id3a/capolungo-3850-a/reduced_data/ti_7/reconstructions/ff/output_files/10/grains.out' # Your grains.out file, if full path is not provided, will default to looking in main_directory
 
@@ -118,7 +118,7 @@ NF_reconstruction:
     vertical_motor_position: 0.0 # mm - What is the vertical motor's position?
   
   cross_sectional_dimensions: 1.4 # mm 
-  voxel_spacing: 0.01  # mm - cubic voxel size for reconstruction
+  voxel_spacing: 0.005  # mm - cubic voxel size for reconstruction
   desired_vertical_span: [-0.005, 0.005] # mm - span of vertical space to reconstruct
 
   beam_stop:
@@ -130,20 +130,20 @@ NF_reconstruction:
   # Brute force voxelwise orientation refinement - method not suggested
   # Set to true for missing grains, bound should be about half the orientation spacing
   misorientation: # You really don't want to be doing this... -REL
-    use_misorientation: True # Did you mean False?  You probably meant False... -SEG
+    use_misorientation: False # Did you mean False?  You probably meant False... -SEG
     bound: 0.6  # Degrees
     spacing: 0.1  # Degrees (will not be used if bound = 0.0)
     # Example: bound = 0.5, spacing = 0.25 will produce [-0.5, -0.25, 0.0, 0.25, 0.5]
 
   # Grain centroid cuttoff for serach
-  centroid_serach_radius: 0.2 # mm
-  expand_radius_confidence_threshold: 0.6
+  centroid_serach_radius: 0.5 # mm
+  expand_radius_confidence_threshold: 1.0
   
   missing_grains:
     # Data path to .npz of reconstructed data
     reconstructed_data_path: '/your/path/here/sample_reconstruction.npz'
     # Spacing between orientations used in serach
-    ori_grid_spacing: 4.0 # Degrees - 1.0 is a good place to start
+    ori_grid_spacing: 10.0 # Degrees - 1.0 is a good place to start
     # Where to look for new grains?
     confidence_threshold: 0.6 # Anything less than this will be looked at for new grains
     low_confidence_sparsing: 0 # 0 will take all voxels, 1 will take about half, 2 about a quarter - uses a sparse regular grid - Up to you, 0 has the best chance of finding all missing grains
@@ -154,10 +154,10 @@ NF_reconstruction:
     # Re-rerun and save reconstruction
     re_run_and_save: 1 # If 1 this will re-run the full reconstruction with all grains and save an npz + paraview file (else put 0)
     
-  
+
 
 multiprocessing:
-  num_cpus: half # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
+  num_cpus: 1 # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
   chunk_size: -1 # Use -1 if you wish automatic chunk size calculation
   # RAM_set: True  # if True, manually set max amount of ram
   # max_RAM: 256  # only used if RAM_set is true. in GB
