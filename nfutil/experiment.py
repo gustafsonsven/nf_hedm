@@ -1,3 +1,20 @@
+import os
+import numpy as np
+import argparse
+from hexrd import instrument
+from hexrd import material
+from hexrd import constants
+from hexrd import rotations
+from hexrd import valunits
+from hexrd import instrument
+import yaml
+
+
+def load_instrument(yml):
+    with open(yml, 'r') as f:
+        icfg = yaml.load(f, Loader=yaml.FullLoader)
+    return instrument.HEDMInstrument(instrument_config=icfg)
+
 class Experiment():
     ...
 
