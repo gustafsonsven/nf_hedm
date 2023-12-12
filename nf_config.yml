@@ -157,7 +157,7 @@ NF_reconstruction:
 
 
 multiprocessing:
-  num_cpus: 1 # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
+  num_cpus: 128 # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
   chunk_size: -1 # Use -1 if you wish automatic chunk size calculation
   # RAM_set: True  # if True, manually set max amount of ram
   # max_RAM: 256  # only used if RAM_set is true. in GB
