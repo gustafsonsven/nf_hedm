@@ -1,16 +1,3 @@
-import numba
-import numpy as np
-import math
-import bisect
-import scipy
-import timeit
-import skimage
-
-from hexrd.transforms import xfcapi
-from hexrd import xrdutil
-from hexrd import rotations
-
-
 import timeit
 import logging
 import os
@@ -18,17 +5,16 @@ import multiprocessing
 import tempfile
 import shutil
 import contextlib
+
+import numba
 import numpy as np
+import scipy
+import skimage
 
+from hexrd.transforms import xfcapi
+from hexrd import xrdutil
+from hexrd import rotations
 
-
-
-
-
-
-
-
-#from .process_controller import set_multiprocessing_method, multiprocessing_pool, _mp_state
 from .data_io import _load_images
 
 # %% ============================================================================
@@ -240,7 +226,7 @@ def _test_single_orientation_at_single_coordinate(experiment,image_stack,coord_t
     return exp_map, confidence, misorientation
 
 #@profile
-def _test_single_orientation_at_many_coordinates(experiment,image_stack,coords_to_test,orientation_data_to_test):
+def _test_single_orientation_at_many_coordinates(experiment,image_stack, coords_to_test,orientation_data_to_test):
     """
         Goal: 
             Test a single orientation at a large number of coordinate points to check the 

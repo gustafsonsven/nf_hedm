@@ -9,6 +9,10 @@ from hexrd import valunits
 from hexrd import instrument
 import yaml
 
+from collections import namedtuple
+from numpy.typing import NDArray
+from typing import Dict, Any, Tuple, List
+
 
 def load_instrument(yml):
     with open(yml, 'r') as f:
@@ -16,12 +20,49 @@ def load_instrument(yml):
     return instrument.HEDMInstrument(instrument_config=icfg)
 
 class Experiment():
-    ...
+    def __init__(
+                 exp_maps: NDArray[np.float64], # [N, 3] or [3, N]
+                 plane_data: Dict[Any, Any],
+                 detector_params: NDArray[np.float64], # [1, 10] or [10, 1]
+                 pixel_size: Tuple[float, float],
+                 omega_range: Tuple[float, float],
+                 omega_period: Tuple[float, float],
+                 ome_edges: NDArray[np.float64], # [N]
+                 rMat_d: NDArray[np.float64], # [3, 3]
+                 tVec_d: NDArray[np.float64], # [3]
+                 chi: float,
+                 tVec_s: NDArray[np.float64], # [3]
+                 panel_coords: Tuple[Tuple[float, float], Tuple[float, float]],
+                 base,
+                 inv_deltas,
+                 clip_vals,
+                 bsp,
+                 mat,
+                 material_name,
+                 remap,
+                 vertical_bounds,
+                 beam_vertical_span,
+                 cross_sectional_dimensions,
+                 voxel_spacing,
+                 ncpus,
+                 chunk_size,
+                 analysis_name,
+                 main_directory,
+                 output_directory,
+                 output_plot_check,
+                 point_group_number,
+                 t_vec_s,
+                 centroid_serach_radius,
+                 expand_radius_confidence_threshold,
+                 distortion: NDArray[np.float64]=None,
+    ):
+        ...
 
 
 
 # Generate the experiment
 def generate_experiment(cfg):
+    PanelCoords = namedtuple('Panel_Coordinates', ('lower_left', 'upper_right'))
     analysis_name = cfg.analysis_name # The name you want all your output files to have within thier filename (relevant to the sample)
     main_directory = cfg.main_directory
     output_directory = cfg.output_directory
@@ -102,7 +143,7 @@ def generate_experiment(cfg):
 
     # Define variables in degrees
     # Omega range is the experimental span of omega space
-    ome_range_deg = [(omega_edges_deg[0],omega_edges_deg[nframes])]  # Degrees
+    ome_range_deg = (omega_edges_deg[0],omega_edges_deg[nframes])  # Degrees
     # Omega period is the range in which your omega space lies (often 0 to 360 or -180 to 180)
     ome_period_deg = (ome_range_deg[0][0], ome_range_deg[0][0]+360.) # Degrees
     # Define variables in radians
@@ -136,8 +177,11 @@ def generate_experiment(cfg):
     nrows = panel.rows
     ncols = panel.cols
     # Detector panel dimension information
-    panel_dims = [tuple(panel.corner_ll),
-                  tuple(panel.corner_ur)]
+    # panel_dims = [tuple(panel.corner_ll),
+    #               tuple(panel.corner_ur)]
+    panel_coords = PanelCoords(lower_left=panel.corner_ll, upper_right=panel.corner_ur)
+
+
     x_col_edges = panel.col_edge_vec
     y_row_edges = panel.row_edge_vec
     # What is the max tth possible on the detector?
