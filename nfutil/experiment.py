@@ -7,35 +7,76 @@ from hexrd import constants
 from hexrd import rotations
 from hexrd import valunits
 from hexrd import instrument
+from hexrd.crystallography import PlaneData
 import yaml
 
 from collections import namedtuple
 from numpy.typing import NDArray
 from typing import Dict, Any, Tuple, List
 
+from nf_config.nf_root import NFRootConfig
 
-def load_instrument(yml):
-    with open(yml, 'r') as f:
-        icfg = yaml.load(f, Loader=yaml.FullLoader)
-    return instrument.HEDMInstrument(instrument_config=icfg)
 
 class Experiment():
-    def __init__(
-                 exp_maps: NDArray[np.float64], # [N, 3] or [3, N]
-                 plane_data: Dict[Any, Any],
-                 detector_params: NDArray[np.float64], # [1, 10] or [10, 1]
-                 pixel_size: Tuple[float, float],
+    """ Class which holds all necessary precomputed information
+
+        Attributes:
+            `exponential_maps`: A numpy array of size [num_grains,3] with each grain's orientation as an [exponential map](https://en.wikipedia.org/wiki/Axis%E2%80%93angle_representation)
+            `plane_data`: A PlaneData object containing material crystalographic information
+            `detector_euler_angles`: A numpy array of size [3] Passive euler angles in order xyz rotating the detector in the HEXRD lab frame
+            `detector_pixel_size`: A tuple of the effective detector pixel size, [row,col] in mm where 'detector' refers to the combination of camera and magnification
+            `omega_range`: Range in omega in which the sample was rotated during the NF scan in radians
+            `omega_period`: Period describing the modulus of omega space in radians
+            `omega_edges`: 
+            `rMat_d`: 
+            `tVec_d`: 
+            `chi`: 
+            `tVec_s`: 
+            `panel_coords`: 
+            `base`: 
+            `inv_deltas`: 
+            `clip_vals`: 
+            `bsp`: 
+            `mat`: 
+            `material_name`: 
+            `remap`: 
+            `vertical_bounds`: 
+            `beam_vertical_span`: 
+            `cross_sectional_dimensions`: 
+            `voxel_spacing`: 
+            `ncpus`: 
+            `chunk_size`: 
+            `analysis_name`: 
+            `main_directory`: 
+            `output_directory`: 
+            `output_plot_check`: 
+            `point_group_number`: 
+            `t_vec_s`: 
+            `centroid_serach_radius`: 
+            `expand_radius_confidence_threshold`: 
+            `distortion`: 
+        ...
+
+
+    """
+    def __init__(self,
+                 config: NFRootConfig,
+                 grain_orientations_as_exponential_maps: NDArray[np.float64], # [num_grains, 3]
+                 plane_data: PlaneData,
+                 # detector_params: NDArray[np.float64], # [10] TODO: Remove detector_params and replace with split [tilt_angles_xyzp, tVec_d, chi, tVec_s]
+                 detector_passive_euler_angles_lab_xyz: NDArray[np.float64], # [3]
+                 pixel_size: Tuple[float, float], # mm
                  omega_range: Tuple[float, float],
                  omega_period: Tuple[float, float],
-                 ome_edges: NDArray[np.float64], # [N]
+                 omega_edges: NDArray[np.float64], # [num_frames+1]
                  rMat_d: NDArray[np.float64], # [3, 3]
                  tVec_d: NDArray[np.float64], # [3]
                  chi: float,
                  tVec_s: NDArray[np.float64], # [3]
                  panel_coords: Tuple[Tuple[float, float], Tuple[float, float]],
-                 base,
-                 inv_deltas,
-                 clip_vals,
+                 base: NDArray[np.float64], # [3]
+                 inv_deltas: NDArray[np.float64], # [3]
+                 clip_vals: Tuple[int, int],
                  bsp,
                  mat,
                  material_name,
@@ -56,8 +97,40 @@ class Experiment():
                  expand_radius_confidence_threshold,
                  distortion: NDArray[np.float64]=None,
     ):
+        self.t_vec_s: NDArray[np.float64] = t_vec_s
+        self.chi = self.load_chi(config)
+        a,b,c = self.load_many_things()
+
+
+
+        
+        
         ...
 
+    @staticmethod
+    def load_instrument(yml):
+        with open(yml, 'r') as f:
+            icfg = yaml.load(f, Loader=yaml.FullLoader)
+        return instrument.HEDMInstrument(instrument_config=icfg)
+
+    @staticmethod
+    def load_chi(config: NFRootConfig, t_vec_s: NDArray) -> float:
+        # self.load_instrument
+        return 0.0
+    
+    @staticmethod
+    def load_many_things(config: NFRootConfig):
+        # self.load_instrument
+        return 0.0, 0.1, 0.2
+
+# class A():
+#     def __init__(self, name):
+#         self.name = name
+
+#     @staticmethod
+#     def print_1():
+#         print(1)
+# A.print_1()
 
 
 # Generate the experiment
@@ -87,24 +160,23 @@ def generate_experiment(cfg):
     print(f'Grain data loaded from: {cfg.input_files.grains_out_file}')
 
     # Unpack grain data
+    # TODO: Add graindata input like Don B. mentioned
     completeness = ff_data[:,1] # Completness
     chi2 = ff_data[:,2] # Chi^2
-    exp_maps = ff_data[:,3:6] # Orientations
+    grain_orientations_as_exponential_maps = ff_data[:,3:6] # Orientations
     t_vec_s = ff_data[:,6:9] # Grain centroid positions
     # How many grains do we have total?
-    n_grains_pre_cut = exp_maps.shape[0]
+    n_grains_pre_cut = grain_orientations_as_exponential_maps.shape[0]
 
     # Trim grain information so that we pull only the grains that we want
     comp_thresh = cfg.experiment.comp_thresh
     chi2_thresh = cfg.experiment.chi2_thresh
     cut = np.where(np.logical_and(completeness>comp_thresh,chi2<chi2_thresh))[0]
-    exp_maps = exp_maps[cut,:] # Orientations
+    grain_orientations_as_exponential_maps = grain_orientations_as_exponential_maps[cut,:] # Orientations
     t_vec_s = t_vec_s[cut,:] # Grain centroid positions
 
-    # How many grains do we have after the cull?
-    n_grains = exp_maps.shape[0]
     # Tell the user what we are doing so they know
-    print(f'{n_grains} grains out of a total {n_grains_pre_cut} found to satisfy completness and chi^2 thresholds.')
+    print(f'{grain_orientations_as_exponential_maps.shape[0]} grains out of a total {n_grains_pre_cut} found to satisfy completness and chi^2 thresholds.')
 
     # Load the images
     images_filename = output_directory + os.sep + analysis_name + '_packaged_images.npy'
@@ -121,34 +193,30 @@ def generate_experiment(cfg):
     omega_edges_filename = output_directory + os.sep + analysis_name + '_omega_edges_deg.npy'
     if os.path.isfile(omega_edges_filename):
         # Load the omega edges - first value is the starting ome position of first image's slew, last value is the end position of the final image's slew
-        omega_edges_deg = np.load(omega_edges_filename)
+        omega_edges = np.load(omega_edges_filename)*np.pi/180
     else:
         # Define omega edges manually
-        omega_edges_deg = np.linspace(cfg.experiment.omega_start, cfg.experiment.omega_stop, num=nframes+1)
+        omega_edges = np.linspace(cfg.experiment.omega_start, cfg.experiment.omega_stop, num=nframes+1)*np.pi/180
 
     # Shift in omega positive or negative by X number of images
     num_img_to_shift = cfg.experiment.shift_images_in_omega
     if num_img_to_shift > 0:
         # Moving positive omega so first image is not at zero, but further along
         # Using the mean omega step size - change if you need to
-        omega_edges_deg = omega_edges_deg + num_img_to_shift*np.mean(np.gradient(omega_edges_deg))
+        omega_edges += num_img_to_shift*np.mean(np.gradient(omega_edges))
     elif num_img_to_shift < 0:
         # For whatever reason the multiprocessor does not like negative numbers, trim the stack
         image_stack = image_stack[np.abs(num_img_to_shift):,:,:]
         nframes = np.shape(image_stack)[0]
-        omega_edges_deg = omega_edges_deg[:num_img_to_shift]
-    # Define omega edges in radians
-    ome_edges = omega_edges_deg*np.pi/180
+        omega_edges = omega_edges[:num_img_to_shift]
 
 
     # Define variables in degrees
     # Omega range is the experimental span of omega space
-    ome_range_deg = (omega_edges_deg[0],omega_edges_deg[nframes])  # Degrees
+    omega_range = (omega_edges[0],omega_edges[nframes])  # rad
     # Omega period is the range in which your omega space lies (often 0 to 360 or -180 to 180)
-    ome_period_deg = (ome_range_deg[0][0], ome_range_deg[0][0]+360.) # Degrees
-    # Define variables in radians
-    ome_period = (ome_period_deg[0]*np.pi/180.,ome_period_deg[1]*np.pi/180.)
-    ome_range = [(ome_range_deg[0][0]*np.pi/180.,ome_range_deg[0][1]*np.pi/180.)]
+    omega_period = (omega_range[0], omega_range[0]+(2*np.pi)) # rad
+
 
     # Load the detector data
     if os.path.isfile(cfg.input_files.detector_file):
@@ -167,7 +235,7 @@ def generate_experiment(cfg):
     # Some detector tilt information
     # xfcapi.makeRotMatOfExpMap(tilt) = xfcapi.makeDetectorRotMat(rotations.angles_from_rmat_xyz(xfcapi.makeRotMatOfExpMap(tilt))) where tilt are directly read in from the .yaml as a exp_map 
     rMat_d = panel.rmat # Generated by xfcapi.makeRotMatOfExpMap(tilt) where tilt are directly read in from the .yaml as a exp_map 
-    tilt_angles_xyzp = np.asarray(rotations.angles_from_rmat_xyz(rMat_d)) # These are needed for xrdutil.simulateGVecs where they are converted to a rotation matrix via xfcapi.makeDetectorRotMat(detector_params[:3]) which reads in tiltAngles = [gamma_Xl, gamma_Yl, gamma_Zl] in radians
+    detector_passive_euler_angles_lab_xyz = np.asarray(rotations.angles_from_rmat_xyz(rMat_d)) # These are needed for xrdutil.simulateGVecs where they are converted to a rotation matrix via xfcapi.makeDetectorRotMat(detector_params[:3]) which reads in tiltAngles = [gamma_Xl, gamma_Yl, gamma_Zl] in radians
     tVec_d = panel.tvec
 
     # Pixel information
@@ -177,7 +245,7 @@ def generate_experiment(cfg):
     nrows = panel.rows
     ncols = panel.cols
     # Detector panel dimension information
-    # panel_dims = [tuple(panel.corner_ll),
+    # panel_coords = [tuple(panel.corner_ll),
     #               tuple(panel.corner_ur)]
     panel_coords = PanelCoords(lower_left=panel.corner_ll, upper_right=panel.corner_ur)
 
@@ -187,18 +255,18 @@ def generate_experiment(cfg):
     # What is the max tth possible on the detector?
     max_pixel_tth = instrument.max_tth(instr)
     # Package detector parameters
-    detector_params = np.hstack([tilt_angles_xyzp, tVec_d, chi, tVec_s])
+    detector_params = np.hstack([detector_passive_euler_angles_lab_xyz, tVec_d, chi, tVec_s])
     distortion = panel.distortion  # TODO: This is currently not used.
 
     # Parametrization for faster computation
     base = np.array([x_col_edges[0],
                      y_row_edges[0],
-                     ome_edges[0]])
+                     omega_edges[0]])
     deltas = np.array([x_col_edges[1] - x_col_edges[0],
                        y_row_edges[1] - y_row_edges[0],
-                       ome_edges[1] - ome_edges[0]])
+                       omega_edges[1] - omega_edges[0]])
     inv_deltas = 1.0/deltas
-    clip_vals = np.array([ncols, nrows])
+    clip_vals = (ncols, nrows)
 
     # General crystallography data
     beam_energy = valunits.valWUnit("beam_energy", "energy", cfg.experiment.beam_energy, "keV")
@@ -255,16 +323,15 @@ def generate_experiment(cfg):
     # Package up the experiment
     experiment = argparse.Namespace()
     # grains related information
-    experiment.n_grains = n_grains
-    experiment.exp_maps = exp_maps
+    experiment.grain_orientations_as_exponential_maps = grain_orientations_as_exponential_maps
     experiment.plane_data = pd
     experiment.detector_params = detector_params
     experiment.pixel_size = pixel_size
-    experiment.ome_range = ome_range
-    experiment.ome_period = ome_period
+    experiment.omega_range = omega_range
+    experiment.omega_period = omega_period
     experiment.x_col_edges = x_col_edges
     experiment.y_row_edges = y_row_edges
-    experiment.ome_edges = ome_edges
+    experiment.omega_edges = omega_edges
     experiment.ncols = ncols
     experiment.nrows = nrows
     experiment.nframes = nframes  # used only in simulate...
@@ -273,7 +340,7 @@ def generate_experiment(cfg):
     experiment.chi = chi  # note this is used to compute S... why is it needed?
     experiment.tVec_s = tVec_s
     experiment.distortion = distortion
-    experiment.panel_dims = panel_dims  # used only in simulate...
+    experiment.panel_coords = panel_coords  # used only in simulate...
     experiment.base = base
     experiment.inv_deltas = inv_deltas
     experiment.clip_vals = clip_vals
@@ -295,6 +362,7 @@ def generate_experiment(cfg):
     experiment.t_vec_s = t_vec_s
     experiment.centroid_serach_radius = cfg.reconstruction.centroid_serach_radius
     experiment.expand_radius_confidence_threshold = cfg.reconstruction.expand_radius_confidence_threshold
+    experiment.detector_passive_euler_angles_lab_xyz = detector_passive_euler_angles_lab_xyz
 
     # Tomo parameters
     if cfg.reconstruction.tomography is None:
@@ -302,8 +370,8 @@ def generate_experiment(cfg):
         experiment.vertical_motor_position = None
     else:
         # TODO: Add project through single layer
-        experiment.mask_filepath = cfg.reconstruction.tomography.mask_filepath
-        experiment.vertical_motor_position = cfg.reconstruction.tomography.vertical_motor_position
+        experiment.mask_filepath = cfg.reconstruction.tomography['mask_filepath']
+        experiment.vertical_motor_position = cfg.reconstruction.tomography['vertical_motor_position']
     
     # Misorientation
     if cfg.reconstruction.misorientation:

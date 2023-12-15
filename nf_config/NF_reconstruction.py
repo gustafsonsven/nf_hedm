@@ -14,9 +14,9 @@ class NF_ReconstructionConfig(Config):
     def tomography(self):
         key = self._cfg.get('NF_reconstruction:tomography:mask_filepath', None)
         if key is not None:
-            parms = dict(mask_filepath='NF_reconstruction:tomography:mask_filepath',
-                         vertical_motor_position='NF_reconstruction:tomography:vertical_motor_position',
-                         use_single_layer='NF_reconstruction:tomography:use_single_layer')
+            parms = dict(mask_filepath=self._cfg.get('NF_reconstruction:tomography:mask_filepath'),
+                         vertical_motor_position=self._cfg.get('NF_reconstruction:tomography:vertical_motor_position'),
+                         use_single_layer=self._cfg.get('NF_reconstruction:tomography:use_single_layer'))
             return parms
         else:
             return None

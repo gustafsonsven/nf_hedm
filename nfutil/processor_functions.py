@@ -165,7 +165,7 @@ def _test_single_orientation_at_single_coordinate(experiment,image_stack,coord_t
         clip_vals = experiment.clip_vals # Number of pixels along X,Y [mm,mm]
         bsp = experiment.bsp # Beam stop parameters [vertical center,width] [mm,mm]
         ome_edges = experiment.ome_edges # Omega start stop positions for each frame in image stack
-        panel_dims_expanded = [(-10, -10), (10, 10)] # Pixels near the edge of the detector to avoid
+        panel_coords_expanded = [(-10, -10), (10, 10)] # Pixels near the edge of the detector to avoid
         ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.]) # Assume grain is unstrained 
 
         # Define misorientation grid
@@ -191,7 +191,7 @@ def _test_single_orientation_at_single_coordinate(experiment,image_stack,coord_t
             # Define all parameters for the orientation (strain and orientation)
             gparams = np.hstack([exp_map, ref_gparams])
             # Simulate the the diffraction events
-            sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_dims=panel_dims_expanded,
+            sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_coords=panel_coords_expanded,
                                                 pixel_pitch=pixel_size,ome_range=ome_range,ome_period=ome_period,
                                                 distortion=None)
             # Pull just the angles for each g-vector
@@ -474,7 +474,7 @@ def _precompute_diffraction_data_of_single_orientation(experiment,exp_map):
     pixel_size = experiment.pixel_size # Pixel size (mm)
     ome_range = experiment.ome_range # Start and stop omega position of image stack (rad)
     ome_period = experiment.ome_period # Defined omega period for HEXRD to work in (rad)
-    panel_dims_expanded = [(-10, -10), (10, 10)] # Pixels near the edge of the detector to avoid
+    panel_coords_expanded = [(-10, -10), (10, 10)] # Pixels near the edge of the detector to avoid
     ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.]) # Assume grain is unstrained
 
     # Transform exp_map to rotation matrix
@@ -482,7 +482,7 @@ def _precompute_diffraction_data_of_single_orientation(experiment,exp_map):
     # Define all parameters for the orientation (strain and orientation)
     gparams = np.hstack([exp_map, ref_gparams])
     # Simulate the the diffraction events
-    sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_dims=panel_dims_expanded,
+    sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_coords=panel_coords_expanded,
                                         pixel_pitch=pixel_size,ome_range=ome_range,ome_period=ome_period,
                                         distortion=None)
     # Pull just the angles for each g-vector
@@ -526,7 +526,7 @@ def _precompute_diffraction_data_of_many_orientations(experiment,exp_maps,start=
     pixel_size = experiment.pixel_size # Pixel size (mm)
     ome_range = experiment.ome_range # Start and stop omega position of image stack (rad)
     ome_period = experiment.ome_period # Defined omega period for HEXRD to work in (rad)
-    panel_dims_expanded = [(-10, -10), (10, 10)] # Pixels near the edge of the detector to avoid
+    panel_coords_expanded = [(-10, -10), (10, 10)] # Pixels near the edge of the detector to avoid
     ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.]) # Assume grain is unstrained
 
     # How many orientations do we have?
@@ -553,7 +553,7 @@ def _precompute_diffraction_data_of_many_orientations(experiment,exp_maps,start=
         # Define all parameters for the orientation (strain and orientation)
         gparams = np.hstack([exp_map, ref_gparams])
         # Simulate the the diffraction events
-        sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_dims=panel_dims_expanded,
+        sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_coords=panel_coords_expanded,
                                             pixel_pitch=pixel_size,ome_range=ome_range,ome_period=ome_period,
                                             distortion=None)
         # Pull just the angles for each g-vector

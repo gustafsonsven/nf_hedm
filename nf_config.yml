@@ -113,7 +113,7 @@ NF_images:
 
 NF_reconstruction:
   tomography:
-    mask_filepath: # Absolute path or leave empty to not use a mask
+    mask_filepath: /this/is/my/path # Absolute path or leave empty to not use a mask
     use_single_layer: False # True uses the center mask layer for all vertical positions
     vertical_motor_position: 0.0 # mm - What is the vertical motor's position?
   
