@@ -13,13 +13,18 @@ class NF_ReconstructionConfig(Config):
     @property
     def tomography(self):
         key = self._cfg.get('NF_reconstruction:tomography:mask_filepath', None)
+        if key == 'None':
+            key = None
         if key is not None:
             parms = dict(mask_filepath=self._cfg.get('NF_reconstruction:tomography:mask_filepath'),
                          vertical_motor_position=self._cfg.get('NF_reconstruction:tomography:vertical_motor_position'),
                          use_single_layer=self._cfg.get('NF_reconstruction:tomography:use_single_layer'))
             return parms
         else:
-            return None
+            parms = dict(mask_filepath=None,
+                vertical_motor_position=None,
+                use_single_layer=None)
+        return parms
 
     @property
     def cross_sectional_dimensions(self):
@@ -46,18 +51,21 @@ class NF_ReconstructionConfig(Config):
     
     @property
     def misorientation(self):
-        key = self._cfg.get(
-            'experiment:misorientation:use_misorientation', False)
+        key = self._cfg.get('NF_reconstruction:misorientation:use_misorientation', False)
         if key is True:
-            parms = dict(misorientation_bnd=self.get('experiment:misorientation:bound', 0.0),
-                         misorientation_spacing=self.get('experiment:misorientation:spacing', 0.25))
+            parms = dict(misorientation_bnd=self.get('NF_reconstruction:misorientation:bound', 0.0),
+                         misorientation_spacing=self.get('NF_reconstruction:misorientation:spacing', 0.25))
             return parms
         else:
-            return
+            parms = dict(misorientation_bnd = None,
+                         misorientation_spacing = None)
+            return parms
         
     @property
     def missing_grains(self):
         key = self._cfg.get('NF_reconstruction:missing_grains', None)
+        if key == 'None':
+            key = None
         if key is not None:
             parms = dict(reconstructed_data_path = self._cfg.get('NF_reconstruction:missing_grains:reconstructed_data_path'),
                          ori_grid_spacing = self._cfg.get('NF_reconstruction:missing_grains:ori_grid_spacing'),
@@ -69,7 +77,15 @@ class NF_ReconstructionConfig(Config):
                          re_run_and_save = self._cfg.get('NF_reconstruction:missing_grains:re_run_and_save'))
             return parms
         else:
-            return None
+            parms = dict(reconstructed_data_path = None,
+                        ori_grid_spacing = None,
+                        confidence_threshold = None,
+                        low_confidence_sparsing = None,
+                        errode_free_surface = None,
+                        coord_cutoff_scale = None,
+                        iter_cutoff = None,
+                        re_run_and_save = None)
+            return parms
 
     @property
     def centroid_serach_radius(self):

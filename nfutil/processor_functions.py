@@ -23,19 +23,19 @@ from .data_io import _load_images
 # Check the image stack for signal
 @numba.njit(nogil=True, cache=True)
 def _quant_and_clip_confidence(coords, angles, image,
-                               base, inv_deltas, clip_vals, bsp, ome_edges):
+                               x_y_omega_base_values, x_y_omega_inverse_deltas, detector_pixel_bounds, beamstop_mask, omega_edges):
     """quantize and clip the parametric coordinates in coords + angles
 
     coords - (..., 2) array: input 2d parametric coordinates
     angles - (...) array: additional dimension for coordinates
-    base   - (3,) array: base value for quantization (for each dimension)
-    inv_deltas - (3,) array: inverse of the quantum size (for each dimension)
-    clip_vals - (2,) array: clip size (only applied to coords dimensions)
-    bsp - (2,) array: beam stop vertical position and width in mm
-    ome_edges - (...): list of omega edges
+    x_y_omega_base_values   - (3,) array: x_y_omega_base_values value for quantization (for each dimension)
+    x_y_omega_inverse_deltas - (3,) array: inverse of the quantum size (for each dimension)
+    detector_pixel_bounds - (2,) array: clip size (only applied to coords dimensions)
+    beamstop_mask - (2,) array: beam stop vertical position and width in mm
+    omega_edges - (...): list of omega edges
 
-    clipping is performed on ranges [0, clip_vals[0]] for x and
-    [0, clip_vals[1]] for y
+    clipping is performed on ranges [0, detector_pixel_bounds[0]] for x and
+    [0, detector_pixel_bounds[1]] for y
 
     returns an array with the quantized coordinates, with coordinates
     falling outside the clip zone filtered out.
@@ -66,46 +66,46 @@ def _quant_and_clip_confidence(coords, angles, image,
         yf = coords[i, 1]
 
         # does not count intensity which is covered by the beamstop dcp 5.13.21
-        # if len(bsp) == 2: # Added this flag for handling if we have a mask type beamstop - SEG 10/28/2023
-        #     if abs(yf-bsp[0]) < (bsp[1]/2.):
+        # if len(beamstop_mask) == 2: # Added this flag for handling if we have a mask type beamstop - SEG 10/28/2023
+        #     if abs(yf-beamstop_mask[0]) < (beamstop_mask[1]/2.):
         #         continue
-        
-        xf = np.floor((xf - base[0]) * inv_deltas[0])
-        #xf = math.floor((coords[i, 0] - base[0]) * inv_deltas[0])
+        # TODO: try vectoizing this stuff
+        xf = np.floor((xf - x_y_omega_base_values[0]) * x_y_omega_inverse_deltas[0])
+        #xf = math.floor((coords[i, 0] - x_y_omega_base_values[0]) * x_y_omega_inverse_deltas[0])
 
-        #if not (0.0 <= xf < clip_vals[0]): continue
+        #if not (0.0 <= xf < detector_pixel_bounds[0]): continue
 
         if not xf >= 0.0:
             continue
-        if not xf < clip_vals[0]:
+        if not xf < detector_pixel_bounds[0]:
             continue
 
-        #yf = math.floor((coords[i, 1] - base[1]) * inv_deltas[1])
-        yf = np.floor((yf - base[1]) * inv_deltas[1])
+        #yf = math.floor((coords[i, 1] - x_y_omega_base_values[1]) * x_y_omega_inverse_deltas[1])
+        yf = np.floor((yf - x_y_omega_base_values[1]) * x_y_omega_inverse_deltas[1])
 
 
-        #if not (0.0 <= yf < clip_vals[1]): continue
+        #if not (0.0 <= yf < detector_pixel_bounds[1]): continue
 
         if not yf >= 0.0:
             continue
-        if not yf < clip_vals[1]:
+        if not yf < detector_pixel_bounds[1]:
             continue
         
         # Adding 2D 'beamstop' mask functionality to handle the 2x objective lens + scinitaltor issues - SEG 10/28/2023
         # The beamstop parameter is now the shape of a single image
         # The beamstop mask is TRUE on the beamstop/past the edge of scintilator
-        # Comment out the top bsp function
-        # if len(bsp) > 2:
-        if bsp[int(yf), int(xf)]: continue
+        # Comment out the top beamstop_mask function
+        # if len(beamstop_mask) > 2:
+        if beamstop_mask[int(yf), int(xf)]: continue
 
         # CHANGE SEG 6/22/2023 and 10/03/2023 - Put in a binary serach of the omega edges
         #ome_pos = angles[i]
         # While bisect left is nominally faster - it does not work with numba
-        # Bisect left returns the index, j, such that all ome_edges[0:j] < ome_pos
-        # zf = bisect.bisect_left(ome_edges, ome_pos) - 1
+        # Bisect left returns the index, j, such that all omega_edges[0:j] < ome_pos
+        # zf = bisect.bisect_left(omega_edges, ome_pos) - 1
         # This method is faster when combined with numba
-        #zf = find_target_index(ome_edges, angles[i])
-        zf = find_target_index(ome_edges, angles[i])
+        #zf = find_target_index(omega_edges, angles[i])
+        zf = find_target_index(omega_edges, angles[i])
         in_sensor += 1
 
         x, y, z = int(xf), int(yf), int(zf)
@@ -118,7 +118,6 @@ def _quant_and_clip_confidence(coords, angles, image,
 # %% ============================================================================
 # PROCESSOR FUNCTIONS
 # ===============================================================================
-#@profile
 def _test_single_orientation_at_single_coordinate(experiment,image_stack,coord_to_test,orientation_data_to_test,refine_yes_no=0):
     """
         Goal: 
@@ -132,19 +131,19 @@ def _test_single_orientation_at_single_coordinate(experiment,image_stack,coord_t
         # Unpack the precomputed orientation data
         exp_map, angles, rMat_ss, gvec_cs, rMat_c = orientation_data_to_test
         # Grab some experiment data
-        tD = experiment.tVec_d # Detector X,Y,Z translation (mm)
-        rD = experiment.rMat_d # Detector rotation matrix (rad)
-        tS = experiment.tVec_s # Sample X,Y,Z translation (mm)
-        base = experiment.base # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
-        inv_deltas = experiment.inv_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
-        clip_vals = experiment.clip_vals # Number of pixels along X,Y [mm,mm]
-        bsp = experiment.bsp # Beam stop parameters [vertical center,width] [mm,mm]
-        ome_edges = experiment.ome_edges # Omega start stop positions for each frame in image stack
+        detector_translation_vector = experiment.detector.tvec # Detector X,Y,Z translation (mm)
+        detector_rotation_matrix = experiment.detector.rmat # Detector rotation matrix (rad)
+        sample_translation_vector = experiment.instrument.tvec # Sample X,Y,Z translation (mm)
+        x_y_omega_base_values = experiment.x_y_omega_base_values # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
+        x_y_omega_inverse_deltas = experiment.x_y_omega_inverse_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
+        detector_pixel_bounds = (experiment.detector.cols, experiment.detector.rows) # Number of pixels along X,Y [mm,mm]
+        beamstop_mask = experiment.beamstop_mask # Beam stop parameters [vertical center,width] [mm,mm]
+        omega_edges = experiment.omega_edges # Omega start stop positions for each frame in image stack
         # Find where those g-vectors intercept the detector from our coordinate point
-        det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, np.squeeze(rMat_c), tD, tS, coord_to_test)
+        det_xy = xfcapi.gvec_to_xy(gvec_cs, detector_rotation_matrix, rMat_ss, np.squeeze(rMat_c), detector_translation_vector, sample_translation_vector, coord_to_test)
         # Check xy detector positions and omega value to see if intensity exisits
         confidence = _quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
-                                        base, inv_deltas, clip_vals, bsp, ome_edges)
+                                        x_y_omega_base_values, x_y_omega_inverse_deltas, detector_pixel_bounds, beamstop_mask, omega_edges)
         # Return the orienation and its confidence
         misorientation = 0
     elif refine_yes_no == 1:
@@ -152,21 +151,21 @@ def _test_single_orientation_at_single_coordinate(experiment,image_stack,coord_t
         # Unpack the precomputed orientation data
         original_exp_map = orientation_data_to_test[0]
         # Grab some experiment data
-        plane_data = experiment.plane_data # Packaged information about the material and HKLs
-        detector_params = experiment.detector_params # Detector tilts, position, as well as stage position and chi [?,mm,mm,chi]
-        pixel_size = experiment.pixel_size # Pixel size (mm)
-        ome_range = experiment.ome_range # Start and stop omega position of image stack (rad)
-        ome_period = experiment.ome_period # Defined omega period for HEXRD to work in (rad)
-        tD = experiment.tVec_d # Detector X,Y,Z translation (mm)
-        rD = experiment.rMat_d # Detector rotation matrix (rad)
-        tS = experiment.tVec_s # Sample X,Y,Z translation (mm)
-        base = experiment.base # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
-        inv_deltas = experiment.inv_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
-        clip_vals = experiment.clip_vals # Number of pixels along X,Y [mm,mm]
-        bsp = experiment.bsp # Beam stop parameters [vertical center,width] [mm,mm]
-        ome_edges = experiment.ome_edges # Omega start stop positions for each frame in image stack
+        plane_data = experiment.planedata # Packaged information about the material and HKLs
+        detector_params = experiment.generate_detector_parameters(experiment.instr,experiment.detector) # Detector tilts, position, as well as stage position and chi [?,mm,mm,chi]
+        pixel_size = (experiment.detector.pixel_size_row, experiment.detector.pixel_size_col) # Pixel size (mm)
+        omega_range = experiment.omega_range # Start and stop omega position of image stack (rad)
+        omega_period = experiment.omega_period # Defined omega period for HEXRD to work in (rad)
         panel_coords_expanded = [(-10, -10), (10, 10)] # Pixels near the edge of the detector to avoid
-        ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.]) # Assume grain is unstrained 
+        ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.]) # Assume grain is unstrained
+        detector_translation_vector = experiment.detector.tvec # Detector X,Y,Z translation (mm)
+        detector_rotation_matrix = experiment.detector.rmat # Detector rotation matrix (rad)
+        sample_translation_vector = experiment.instrument.tvec # Sample X,Y,Z translation (mm)
+        x_y_omega_base_values = experiment.x_y_omega_base_values # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
+        x_y_omega_inverse_deltas = experiment.x_y_omega_inverse_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
+        detector_pixel_bounds = (experiment.detector.cols, experiment.detector.rows) # Number of pixels along X,Y [mm,mm]
+        beamstop_mask = experiment.beamstop_mask # Beam stop parameters [vertical center,width] [mm,mm]
+        omega_edges = experiment.omega_edges # Omega start stop positions for each frame in image stack
 
         # Define misorientation grid
         mis_amt = experiment.misorientation_bound_rad # This is the amount of misorientation allowed on one side of the original orientation
@@ -191,8 +190,8 @@ def _test_single_orientation_at_single_coordinate(experiment,image_stack,coord_t
             # Define all parameters for the orientation (strain and orientation)
             gparams = np.hstack([exp_map, ref_gparams])
             # Simulate the the diffraction events
-            sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_coords=panel_coords_expanded,
-                                                pixel_pitch=pixel_size,ome_range=ome_range,ome_period=ome_period,
+            sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_dims=panel_coords_expanded,
+                                                pixel_pitch=pixel_size,ome_range=[omega_range],ome_period=[omega_period],
                                                 distortion=None)
             # Pull just the angles for each g-vector
             angles = sim_results[2]
@@ -201,10 +200,10 @@ def _test_single_orientation_at_single_coordinate(experiment,image_stack,coord_t
             # Convert the angles to g-vectors
             gvec_cs = xfcapi.anglesToGVec(angles, rMat_c=rMat_c)
             # Find where those g-vectors intercept the detector from our coordinate point
-            det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test)
+            det_xy = xfcapi.gvec_to_xy(gvec_cs, detector_rotation_matrix, rMat_ss, rMat_c, detector_translation_vector, sample_translation_vector, coord_to_test)
             # Check xy detector positions and omega value to see if intensity exisits
             all_confidence[i] = _quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
-                                            base, inv_deltas, clip_vals, bsp, ome_edges)
+                                            x_y_omega_base_values, x_y_omega_inverse_deltas, detector_pixel_bounds, beamstop_mask, omega_edges)
             
         # Find the index of the max confidence
         idx = np.where(all_confidence == np.max(all_confidence))[0][0] # Grab just the first instance if there is a tie
@@ -225,7 +224,6 @@ def _test_single_orientation_at_single_coordinate(experiment,image_stack,coord_t
 
     return exp_map, confidence, misorientation
 
-#@profile
 def _test_single_orientation_at_many_coordinates(experiment,image_stack, coords_to_test,orientation_data_to_test):
     """
         Goal: 
@@ -239,14 +237,14 @@ def _test_single_orientation_at_many_coordinates(experiment,image_stack, coords_
     """
     
     # Grab some experiment data
-    tD = experiment.tVec_d # Detector X,Y,Z translation (mm)
-    rD = experiment.rMat_d # Detector rotation matrix (rad)
-    tS = experiment.tVec_s # Sample X,Y,Z translation (mm)
-    base = experiment.base # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
-    inv_deltas = experiment.inv_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
-    clip_vals = experiment.clip_vals # Number of pixels along X,Y [mm,mm]
-    bsp = experiment.bsp # Beam stop parameters [vertical center,width] [mm,mm]
-    ome_edges = experiment.ome_edges # Omega start stop positions for each frame in image stack
+    detector_translation_vector = experiment.detector.tvec # Detector X,Y,Z translation (mm)
+    detector_rotation_matrix = experiment.detector.rmat # Detector rotation matrix (rad)
+    sample_translation_vector = experiment.instrument.tvec # Sample X,Y,Z translation (mm)
+    x_y_omega_base_values = experiment.x_y_omega_base_values # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
+    x_y_omega_inverse_deltas = experiment.x_y_omega_inverse_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
+    detector_pixel_bounds = (experiment.detector.cols, experiment.detector.rows) # Number of pixels along X,Y [mm,mm]
+    beamstop_mask = experiment.beamstop_mask # Beam stop parameters [vertical center,width] [mm,mm]
+    omega_edges = experiment.omega_edges # Omega start stop positions for each frame in image stack
 
     # Grab orientation information
     exp_map, angles, rMat_ss, gvec_cs, rMat_c = orientation_data_to_test
@@ -263,16 +261,15 @@ def _test_single_orientation_at_many_coordinates(experiment,image_stack, coords_
         # What is our coordinate?
         coord_to_test = coords_to_test[i,:]
         # Find intercept point of each g-vector on the detector
-        det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, np.squeeze(rMat_c), tD, tS, coord_to_test) # Convert angles to xy detector positions
+        det_xy = xfcapi.gvec_to_xy(gvec_cs, detector_rotation_matrix, rMat_ss, np.squeeze(rMat_c), detector_translation_vector, sample_translation_vector, coord_to_test) # Convert angles to xy detector positions
         # Check detector positions and omega values to see if intensity exisits
         all_confidence[i] = _quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
-                                        base, inv_deltas, clip_vals, bsp, ome_edges)
+                                        x_y_omega_base_values, x_y_omega_inverse_deltas, detector_pixel_bounds, beamstop_mask, omega_edges)
         all_exp_maps[i,:] = exp_map
 
     # Return the confidence value at each coordinate point
     return all_exp_maps, all_confidence
 
-#@profile
 def _test_many_orientations_at_single_coordinate(experiment,image_stack,coord_to_test,orientation_data_to_test):
     """
         Goal: 
@@ -284,14 +281,14 @@ def _test_many_orientations_at_single_coordinate(experiment,image_stack,coord_to
     """
     
     # Grab some experiment data
-    tD = experiment.tVec_d # Detector X,Y,Z translation (mm)
-    rD = experiment.rMat_d # Detector rotation matrix (rad)
-    tS = experiment.tVec_s # Sample X,Y,Z translation (mm)
-    base = experiment.base # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
-    inv_deltas = experiment.inv_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
-    clip_vals = experiment.clip_vals # Number of pixels along X,Y [mm,mm]
-    bsp = experiment.bsp # Beam stop parameters [vertical center,width] [mm,mm]
-    ome_edges = experiment.ome_edges # Omega start stop positions for each frame in image stack
+    detector_translation_vector = experiment.detector.tvec # Detector X,Y,Z translation (mm)
+    detector_rotation_matrix = experiment.detector.rmat # Detector rotation matrix (rad)
+    sample_translation_vector = experiment.instrument.tvec # Sample X,Y,Z translation (mm)
+    x_y_omega_base_values = experiment.x_y_omega_base_values # Physical position of (0,0) pixel at omega = 0 [X,Y,omega] = [mm,mm,rad]
+    x_y_omega_inverse_deltas = experiment.x_y_omega_inverse_deltas # 1 over step size along X,Y,omega in image stack [1/mm,1/mm/,1/rad]
+    detector_pixel_bounds = (experiment.detector.cols, experiment.detector.rows) # Number of pixels along X,Y [mm,mm]
+    beamstop_mask = experiment.beamstop_mask # Beam stop parameters [vertical center,width] [mm,mm]
+    omega_edges = experiment.omega_edges # Omega start stop positions for each frame in image stack
 
     # Unpack the orientation information
     all_exp_maps, all_angles, all_rMat_ss, all_gvec_cs, all_rMat_c = orientation_data_to_test
@@ -305,7 +302,7 @@ def _test_many_orientations_at_single_coordinate(experiment,image_stack,coord_to
     # Check each orientation at the coordinate point
     for i in np.arange(n_oris):
         # Check for centroid position
-        if np.linalg.norm(coord_to_test - experiment.t_vec_s[i,:]) <= experiment.centroid_serach_radius:
+        if np.linalg.norm(coord_to_test - experiment.grain_translation_vectors[i,:]) <= experiment.centroid_serach_radius:
             # We are close enough, test the orientation
             # Grab orientation information
             angles = all_angles[i]
@@ -313,10 +310,10 @@ def _test_many_orientations_at_single_coordinate(experiment,image_stack,coord_to
             gvec_cs = all_gvec_cs[i]
             rMat_c = all_rMat_c[i]
             # Find intercept point of each g-vector on the detector
-            det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test) # Convert angles to xy detector positions
+            det_xy = xfcapi.gvec_to_xy(gvec_cs, detector_rotation_matrix, rMat_ss, rMat_c, detector_translation_vector, sample_translation_vector, coord_to_test) # Convert angles to xy detector positions
             # Check detector positions and omega values to see if intensity exisits
             all_confidence[i] = _quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
-                                            base, inv_deltas, clip_vals, bsp, ome_edges)
+                                            x_y_omega_base_values, x_y_omega_inverse_deltas, detector_pixel_bounds, beamstop_mask, omega_edges)
         else:
             # Not close enough ignore
             all_confidence[i] = 0
@@ -332,10 +329,10 @@ def _test_many_orientations_at_single_coordinate(experiment,image_stack,coord_to
             gvec_cs = all_gvec_cs[i]
             rMat_c = all_rMat_c[i]
             # Find intercept point of each g-vector on the detector
-            det_xy = xfcapi.gvec_to_xy(gvec_cs, rD, rMat_ss, rMat_c, tD, tS, coord_to_test) # Convert angles to xy detector positions
+            det_xy = xfcapi.gvec_to_xy(gvec_cs, detector_rotation_matrix, rMat_ss, rMat_c, detector_translation_vector, sample_translation_vector, coord_to_test) # Convert angles to xy detector positions
             # Check detector positions and omega values to see if intensity exisits
             test_confidence = _quant_and_clip_confidence(det_xy, angles[:, 2], image_stack,
-                                            base, inv_deltas, clip_vals, bsp, ome_edges)
+                                            x_y_omega_base_values, x_y_omega_inverse_deltas, detector_pixel_bounds, beamstop_mask, omega_edges)
             if (test_confidence - all_confidence[i]) > 0.05: # Harcode!
                 all_confidence[i] = test_confidence
 
@@ -349,7 +346,6 @@ def _test_many_orientations_at_single_coordinate(experiment,image_stack,coord_to
 
     return exp_map, confidence, idx
 
-#@profile
 def _test_many_orientations_at_many_coordinates(experiment,image_stack,coordinates_to_test,orientation_data_to_test,refine_yes_no=0,start=0,stop=0):
     """
         Goal: 
@@ -407,7 +403,7 @@ def _test_many_orientations_at_many_coordinates(experiment,image_stack,coordinat
             orientation_data_to_test = [test_exp_maps[i], test_angles[i], test_rMat_ss[i], test_gvec_cs[i], test_rMat_c[i]]
             if n_coords == 1:
                 # Check for centroid position
-                if np.linalg.norm(coord_to_test - experiment.t_vec_s[start+i,:]) <= experiment.centroid_serach_radius:
+                if np.linalg.norm(coord_to_test - experiment.grain_translation_vectors[start+i,:]) <= experiment.centroid_serach_radius:
                     # We are close enough, run the test
                     exp_maps, confidence, dummy = _test_single_orientation_at_single_coordinate(experiment,image_stack,coordinates_to_test,orientation_data_to_test)
                 else:
@@ -417,7 +413,7 @@ def _test_many_orientations_at_many_coordinates(experiment,image_stack,coordinat
                     dummy = 0
             else:
                 # Create mask of which coords to test
-                test_these_coords = np.linalg.norm(coordinates_to_test - experiment.t_vec_s[start+i,:],axis=1) <= experiment.centroid_serach_radius
+                test_these_coords = np.linalg.norm(coordinates_to_test - experiment.grain_translation_vectors[start+i,:],axis=1) <= experiment.centroid_serach_radius
                 coordinates_to_test_full = coordinates_to_test
                 coordinates_to_test = coordinates_to_test[test_these_coords]
                 exp_maps, confidence = _test_single_orientation_at_many_coordinates(experiment,image_stack,coordinates_to_test,orientation_data_to_test)
@@ -444,7 +440,6 @@ def _test_many_orientations_at_many_coordinates(experiment,image_stack,coordinat
 
     return all_exp_maps, all_confidence, all_idx, all_misorientation, start, stop
 
-#@profile
 def _precompute_diffraction_data_of_single_orientation(experiment,exp_map):
     """
         Goal: 
@@ -469,11 +464,11 @@ def _precompute_diffraction_data_of_single_orientation(experiment,exp_map):
     # Handle incoming size of exp_map
     exp_map = np.squeeze(exp_map)
     # Grab some experiment data
-    plane_data = experiment.plane_data # Packaged information about the material and HKLs
-    detector_params = experiment.detector_params # Detector tilts, position, as well as stage position and chi [?,mm,mm,chi]
-    pixel_size = experiment.pixel_size # Pixel size (mm)
-    ome_range = experiment.ome_range # Start and stop omega position of image stack (rad)
-    ome_period = experiment.ome_period # Defined omega period for HEXRD to work in (rad)
+    plane_data = experiment.planedata # Packaged information about the material and HKLs
+    detector_params = experiment.generate_detector_parameters(experiment.instr,experiment.detector) # Detector tilts, position, as well as stage position and chi [?,mm,mm,chi]
+    pixel_size = (experiment.detector.pixel_size_row, experiment.detector.pixel_size_col) # Pixel size (mm)
+    omega_range = experiment.omega_range # Start and stop omega position of image stack (rad)
+    omega_period = experiment.omega_period # Defined omega period for HEXRD to work in (rad)
     panel_coords_expanded = [(-10, -10), (10, 10)] # Pixels near the edge of the detector to avoid
     ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.]) # Assume grain is unstrained
 
@@ -482,13 +477,13 @@ def _precompute_diffraction_data_of_single_orientation(experiment,exp_map):
     # Define all parameters for the orientation (strain and orientation)
     gparams = np.hstack([exp_map, ref_gparams])
     # Simulate the the diffraction events
-    sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_coords=panel_coords_expanded,
-                                        pixel_pitch=pixel_size,ome_range=ome_range,ome_period=ome_period,
+    sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_dims=panel_coords_expanded,
+                                        pixel_pitch=pixel_size,ome_range=[omega_range],ome_period=[omega_period],
                                         distortion=None)
     # Pull just the angles for each g-vector
     angles = sim_results[2]
     # Calculate the sample rotation matrix
-    rMat_ss = xfcapi.make_sample_rmat(experiment.chi, angles[:, 2])
+    rMat_ss = xfcapi.make_sample_rmat(experiment.instrument.chi, angles[:, 2])
     # Convert the angles to g-vectors
     gvec_cs = xfcapi.anglesToGVec(angles, rMat_c=rMat_c)
     # Handle arrays not being the correct size if we have only one orientation
@@ -497,7 +492,6 @@ def _precompute_diffraction_data_of_single_orientation(experiment,exp_map):
     # Return precomputed data
     return exp_map, angles, rMat_ss, gvec_cs, rMat_c
 
-#@profile
 def _precompute_diffraction_data_of_many_orientations(experiment,exp_maps,start=0,stop=0):
     """
         Goal: 
@@ -521,11 +515,11 @@ def _precompute_diffraction_data_of_many_orientations(experiment,exp_maps,start=
     """
 
     # Grab some experiment data
-    plane_data = experiment.plane_data # Packaged information about the material and HKLs
-    detector_params = experiment.detector_params # Detector tilts, position, as well as stage position and chi [?,mm,mm,chi]
-    pixel_size = experiment.pixel_size # Pixel size (mm)
-    ome_range = experiment.ome_range # Start and stop omega position of image stack (rad)
-    ome_period = experiment.ome_period # Defined omega period for HEXRD to work in (rad)
+    plane_data = experiment.planedata # Packaged information about the material and HKLs
+    detector_params = experiment.generate_detector_parameters(experiment.instrument,experiment.detector) # Detector tilts, position, as well as stage position and chi [?,mm,mm,chi]
+    pixel_size = (experiment.detector.pixel_size_row, experiment.detector.pixel_size_col) # Pixel size (mm)
+    omega_range = experiment.omega_range # Start and stop omega position of image stack (rad)
+    omega_period = experiment.omega_period # Defined omega period for HEXRD to work in (rad)
     panel_coords_expanded = [(-10, -10), (10, 10)] # Pixels near the edge of the detector to avoid
     ref_gparams = np.array([0., 0., 0., 1., 1., 1., 0., 0., 0.]) # Assume grain is unstrained
 
@@ -553,13 +547,13 @@ def _precompute_diffraction_data_of_many_orientations(experiment,exp_maps,start=
         # Define all parameters for the orientation (strain and orientation)
         gparams = np.hstack([exp_map, ref_gparams])
         # Simulate the the diffraction events
-        sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_coords=panel_coords_expanded,
-                                            pixel_pitch=pixel_size,ome_range=ome_range,ome_period=ome_period,
+        sim_results = xrdutil.simulateGVecs(plane_data,detector_params,gparams,panel_dims=panel_coords_expanded,
+                                            pixel_pitch=pixel_size,ome_range=[omega_range],ome_period=[omega_period],
                                             distortion=None)
         # Pull just the angles for each g-vector
         angles = sim_results[2]
         # Calculate the sample rotation matrix
-        rMat_ss = xfcapi.make_sample_rmat(experiment.chi, angles[:, 2])
+        rMat_ss = xfcapi.make_sample_rmat(experiment.instrument.chi, angles[:, 2])
         # Convert the angles to g-vectors
         gvec_cs = xfcapi.anglesToGVec(angles, rMat_c=rMat_c)
         # Drop data into arrays
@@ -574,7 +568,6 @@ def _precompute_diffraction_data_of_many_orientations(experiment,exp_maps,start=
 # %% ============================================================================
 # USER FACEING MUTI-PROCESSOR HANDLER FUNCTIONS
 # ===============================================================================
-#@profile
 def precompute_diffraction_data(experiment,controller,exp_maps_to_precompute):
     """
         Goal: 
@@ -603,7 +596,7 @@ def precompute_diffraction_data(experiment,controller,exp_maps_to_precompute):
     if len(np.shape(exp_maps_to_precompute)) == 1: exp_maps_to_precompute = np.expand_dims(exp_maps_to_precompute,0)
     n_oris = np.shape(exp_maps_to_precompute)[0]
     # How many CPUs?
-    ncpus = controller.get_process_count()
+    ncpus = experiment.ncpus
     # Are we dealing with one orientation or many?
     if n_oris == 1:
         # Single orientation, precompute the information
@@ -622,7 +615,7 @@ def precompute_diffraction_data(experiment,controller,exp_maps_to_precompute):
         elif ncpus > 1:
             # Many orientations, many CPUs
             # Define the chunk size
-            chunk_size = controller.get_chunk_size()
+            chunk_size = experiment.chunk_size
             if chunk_size == -1:
                 chunk_size = int(np.ceil(n_oris/ncpus))
             # Tell the user what we are doing
@@ -679,7 +672,6 @@ def precompute_diffraction_data(experiment,controller,exp_maps_to_precompute):
     print('Done precomputing orientation data.')
     return all_exp_maps, all_angles, all_rMat_ss, all_gvec_cs, all_rMat_c
 
-#@profile
 def test_orientations_at_coordinates(experiment,controller,image_stack,orientation_data_to_test,coordinates_to_test,refine_yes_no=0,return_misorientation=0):
     """
         Goal: 
@@ -695,7 +687,7 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
     if len(np.shape(coordinates_to_test)) == 1: coordinates_to_test = np.expand_dims(coordinates_to_test,0)
     n_coords = np.shape(coordinates_to_test)[0]
     # How many CPUs?
-    ncpus = controller.get_process_count()
+    ncpus = experiment.ncpus
     # Start a timer
     t0 = timeit.default_timer()
     # Shoot a warning to the user if they are running with refinment
@@ -719,7 +711,7 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
             # Tell the user what we are doing
             print(f'Testing {n_oris} orientations at {n_coords} coordinate points on {ncpus} CPUs.')
             # Define the chunk size
-            chunk_size = controller.get_chunk_size()
+            chunk_size = experiment.chunk_size
             if chunk_size == -1:
                 chunk_size = int(np.ceil(n_coords/ncpus))
             # Create chunking
@@ -761,7 +753,7 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
             # Tell the user what we are doing
             print(f'Testing {n_oris} orientations at {n_coords} coordinate points on {ncpus} CPUs.')
             # Define the chunk size
-            chunk_size = controller.get_chunk_size()
+            chunk_size = experiment.chunk_size
             if chunk_size == -1:
                 chunk_size = int(np.ceil(n_oris/ncpus))
             # Create chunking
@@ -806,7 +798,7 @@ def test_orientations_at_coordinates(experiment,controller,image_stack,orientati
             # Flag those we need to look at
             coords_to_retest = all_confidence < experiment.expand_radius_confidence_threshold
             n_coords_to_retest = np.sum(coords_to_retest)
-            chunk_size = controller.get_chunk_size()
+            chunk_size = experiment.chunk_size
             if chunk_size == -1:
                 chunk_size = int(np.ceil(n_oris/ncpus))
             # Create chunking
@@ -1079,14 +1071,12 @@ def filter_and_binarize_images(cleaned_image_stack,controller,filter_parameters)
 # %% ============================================================================
 # MULTI-PROCESSOR DISTRIBUTOR FUNCTIONS
 # ===============================================================================
-#@profile
 def _precompute_diffraction_data_distributor(chunk):
     # Where are we pulling data from within the lists?
     starts = _mp_state[0]
     stops = _mp_state[1]
     return _precompute_diffraction_data_of_many_orientations(*_mp_state[2:], start=starts[chunk], stop=stops[chunk])
 
-#@profile
 def _test_many_orientations_at_many_coordinates_distributor(chunk):
     # Where are we pulling data from within the lists?
     starts = _mp_state[0]
