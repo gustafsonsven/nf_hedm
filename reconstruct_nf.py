@@ -80,69 +80,61 @@ import nf_config
 # # For pop out, interactive plots (cannot be used with an SSH tunnel)
 # # %matplotlib qt
 # import matplotlib.pyplot as plt
-# %%
-#@profile
-def main():
-    # %% ==========================================================================
-    # FILES TO LOAD - CAN BE EDITED
-    # =============================================================================
-    configuration_filepath = '/nfs/chess/user/seg246/software/development/nf_config.yml'
 
-    # %% ==========================================================================
-    # LOAD IMAGES AND EXPERIMENT - DO NOT EDIT
-    # =============================================================================
-    # Go ahead and load the configuration
-    configuration = nf_config.open_file(configuration_filepath)[0]
-    # Generate the experiment
-    experiment = nfutil.experiment.Experiment(configuration)
-    # Generate the controller
-    controller = nfutil.processor_functions.build_controller(configuration)
-    # %% ==========================================================================
-    # LOAD MASK / GENERATE TEST COORDINATES  - NO CHANGES NEEDED
-    # =============================================================================
-    Xs, Ys, Zs, mask, test_coordinates = nfutil.utilities.generate_test_coordinates(experiment.cross_sectional_dimensions, experiment.vertical_span_to_reconstruct, experiment.voxel_size, mask_data_file=experiment.mask_filepath, vertical_motor_position=experiment.vertical_motor_position)
+# %% ==========================================================================
+# FILES TO LOAD - CAN BE EDITED
+# =============================================================================
+configuration_filepath = '/Users/seg246/CHESS/seg246/software/development/nf_config.yml'
 
-    # %% ==========================================================================
-    # PRECOMPUTE ORIENTATION DATA
-    # =============================================================================
-    precomputed_orientation_data = nfutil.processor_functions.precompute_diffraction_data(experiment,controller,experiment.grain_orientations_as_exponential_maps)
+# %% ==========================================================================
+# LOAD IMAGES AND EXPERIMENT - DO NOT EDIT
+# =============================================================================
+# Go ahead and load the configuration
+config = nf_config.open_file(configuration_filepath)[0]
+# Generate the experiment
+experiment = nfutil.experiment.Experiment(config)
+# Generate the controller
+controller = nfutil.processor_functions.build_controller(config)
 
-    # %% ==========================================================================
-    # TEST ORIENTATIONS AND PROCESS OUTPUT
-    # =============================================================================
-    raw_exp_maps, raw_confidence, raw_idx = nfutil.processor_functions.test_orientations_at_coordinates(experiment,controller,experiment.image_stack,precomputed_orientation_data,test_coordinates,refine_yes_no=0)
-    grain_map, confidence_map = nfutil.utilities.process_raw_data(raw_confidence,raw_idx,Xs.shape,mask=mask,id_remap=experiment.ff_grain_remap_ids)
+# %% ==========================================================================
+# PRECOMPUTE ORIENTATION DATA
+# =============================================================================
+all_orientation_data = nfutil.processor_functions.precompute_diffraction_data(experiment,controller,experiment.grain_orientations_as_exponential_maps)
 
-    # %% ==========================================================================
-    # Show Images - CAN BE EDITED
-    # =============================================================================
-    layer_num = 0 # Which layer in Y?
-    conf_thresh = 0.0 # If set to None no threshold is used
-    nfutil.graphics.plot_ori_map(grain_map, confidence_map, Xs, Zs, experiment.grain_orientations_as_exponential_maps, 
-                        layer_num,experiment.materials[experiment.material_name],experiment.ff_grain_remap_ids,conf_thresh)
-    # Quick note - nfutil assumes that the IPF reference vector is [0 1 0]
-    # Print out the average and max confidence
-    print('The average confidence map value is: ' + str(np.mean(confidence_map)) +'\n'+
-        'The maximum confidence map value is : ' + str(np.max(confidence_map)))
+# %% ==========================================================================
+# TEST ORIENTATIONS AND PROCESS OUTPUT
+# =============================================================================
+#importlib.reload(nfutil.processor_functions)
+experiment, grain_map, confidence_map = nfutil.processor_functions.reconstruct_nf(experiment,controller,all_orientation_data)
 
-    # # %% ==========================================================================
-    # # SAVE PROCESSED GRAIN MAP DATA - CAN BE EDITED
-    # # =============================================================================
-    # nfutil.data_io.save_nf_data(experiment.output_directory, experiment.analysis_name, grain_map, confidence_map,
-    #                     Xs, Ys, Zs, experiment.exp_maps, tomo_mask=mask, id_remap=experiment.remap,
-    #                     save_type=['npz']) # Can be npz or hdf5
 
-    # # %% ==========================================================================
-    # # SAVE PROCESSED GRAIN MAP DATA WITH IPF COLORS - CAN BE EDITED
-    # # =============================================================================
-    # nfutil.data_io.save_nf_data_for_paraview(experiment.output_directory, experiment.analysis_name,grain_map,confidence_map,Xs,Ys,Zs,
-    #                             experiment.exp_maps,experiment.mat[experiment.material_name], tomo_mask=mask,
-    #                             id_remap=experiment.remap)
-    # # Quick note - nfutil assumes that the IPF reference vector is [0 1 0]
+# %% ==========================================================================
+# Show Images - CAN BE EDITED
+# =============================================================================
+layer_num = 0 # Which layer in Y?
+conf_thresh = 0.5 # If set to None no threshold is used
+nfutil.graphics.plot_ori_map(grain_map, confidence_map, experiment.Xs, experiment.Zs, experiment.grain_orientations_as_exponential_maps, 
+                    layer_num,experiment.materials[experiment.material_name],experiment.ff_grain_remap_ids,conf_thresh)
+# Quick note - nfutil assumes that the IPF reference vector is [0 1 0]
+# Print out the average and max confidence
+print('The average confidence map value is: ' + str(np.mean(confidence_map)) +'\n'+
+    'The maximum confidence map value is : ' + str(np.max(confidence_map)))
+
+# # %% ==========================================================================
+# # SAVE PROCESSED GRAIN MAP DATA - CAN BE EDITED
+# # =============================================================================
+# nfutil.data_io.save_nf_data(experiment.output_directory, experiment.analysis_name, grain_map, confidence_map,
+#                     Xs, Ys, Zs, experiment.exp_maps, tomo_mask=mask, id_remap=experiment.remap,
+#                     save_type=['npz']) # Can be npz or hdf5
+
+# # %% ==========================================================================
+# # SAVE PROCESSED GRAIN MAP DATA WITH IPF COLORS - CAN BE EDITED
+# # =============================================================================
+# nfutil.data_io.save_nf_data_for_paraview(experiment.output_directory, experiment.analysis_name,grain_map,confidence_map,Xs,Ys,Zs,
+#                             experiment.exp_maps,experiment.mat[experiment.material_name], tomo_mask=mask,
+#                             id_remap=experiment.remap)
+# # Quick note - nfutil assumes that the IPF reference vector is [0 1 0]
+
 
 
 # %%
-
-
-
-main()

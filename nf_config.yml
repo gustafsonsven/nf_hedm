@@ -1,23 +1,23 @@
-analysis_name: ti_sample_7 # The name you want all your output files to have within thier filename (relevant to the sample)
+analysis_name: c103-1-nf # The name you want all your output files to have within thier filename (relevant to the sample)
 
-main_directory: '/nfs/chess/user/seg246/software/development_working_space/' # Starting path for detector and materials file, if None this will default to working directory.
-output_directory: '/nfs/chess/scratch/user/seg246/development_working_space/output' # Path to save all output files, if None this will default to main_directory
+main_directory: '/Users/seg246/CHESS/seg246/software/development' # Starting path for detector and materials file, if None this will default to working directory.
+output_directory: '/Users/seg246/CHESS/seg246/storage/c103-1-nf/1/output' # Path to save all output files, if None this will default to main_directory
 
 input_files:
-  detector_file: retiga_capolungo-3850-a.yml # Your detector file, if full path is not provided, will default to looking in main_directory
-  materials_file: materials.h5 # Your materials file, if full path is not provided, will default to looking in main_directory
-  grains_out_file: '/nfs/chess/aux/cycles/2023-3/id3a/capolungo-3850-a/reduced_data/ti_7/reconstructions/ff/output_files/10/grains.out' # Your grains.out file, if full path is not provided, will default to looking in main_directory
+  detector_file: '/Users/seg246/CHESS/seg246/storage/c103-1-nf/1/manta.yml' # Your detector file, if full path is not provided, will default to looking in main_directory
+  materials_file: '/Users/seg246/CHESS/seg246/storage/c103-1-nf/1/materials.h5' # Your materials file, if full path is not provided, will default to looking in main_directory
+  grains_out_file: '/Users/seg246/CHESS/seg246/storage/c103-1-ff/output/18/grains.out' # Your grains.out file, if full path is not provided, will default to looking in main_directory
 
 # Do you want plots to show?
 output_plot_check: True
 
 experiment:
   # Incoming beam information
-  beam_energy: 41.991 # keV
+  beam_energy: 88.005 # keV
   beam_vertical_span: [-0.085, 0.085] # mm
 
   # Material information
-  material_name: ti # Must be a material name stored in your materials file
+  material_name: c103 # Must be a material name stored in your materials file
   point_group_number: 27 # Note: this is point group not space group - check nfutil for list
   max_tth: None # Degrees or None - Will clip tth
 
@@ -119,7 +119,7 @@ NF_reconstruction:
   
   cross_sectional_dimensions: 1.4 # mm 
   voxel_spacing: 0.005  # mm - cubic voxel size for reconstruction
-  desired_vertical_span: [-0.005, 0.005] # mm - span of vertical space to reconstruct
+  desired_vertical_span: [-0.0025, 0.0025] # mm - span of vertical space to reconstruct
 
   beam_stop:
     beam_stop_filepath: # Path or leave blank to generate beam_stop with parameters
@@ -138,6 +138,7 @@ NF_reconstruction:
   # Grain centroid cuttoff for serach
   centroid_serach_radius: 0.5 # mm
   expand_radius_confidence_threshold: 1.0
+  num_orientations_in_bag: 1
   
   missing_grains:
     # Data path to .npz of reconstructed data
@@ -157,7 +158,7 @@ NF_reconstruction:
 
 
 multiprocessing:
-  num_cpus: 128 # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
+  num_cpus: half # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
   chunk_size: -1 # Use -1 if you wish automatic chunk size calculation
   # RAM_set: True  # if True, manually set max amount of ram
   # max_RAM: 256  # only used if RAM_set is true. in GB

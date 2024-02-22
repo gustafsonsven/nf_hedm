@@ -57,7 +57,7 @@ import matplotlib.pyplot as plt
 # USER INPUT - CAN BE EDITED
 # ==============================================================================
 # What is the file path to the configuration file?
-configuration_filepath = '/nfs/chess/user/seg246/software/development/nf_config.yml'
+configuration_filepath = '/Users/seg246/CHESS/seg246/software/development/nf_config.yml'
 
 # %% ===========================================================================
 # LOAD CONFIGURATION - DO NOT EDIT

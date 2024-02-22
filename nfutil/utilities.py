@@ -14,7 +14,7 @@ from hexrd.transforms import xfcapi
 from hexrd.sampleOrientations import sampleRFZ
 
 from .data_io import save_nf_data_for_paraview
-from .processor_functions import precompute_diffraction_data, test_orientations_at_coordinates
+#from .processor_functions import precompute_diffraction_data, test_orientations_at_coordinates
 
 # %% ============================================================================
 # SOME MORE IMAGE PROCESSING
@@ -919,7 +919,7 @@ def gen_nf_test_grid_vertical(cross_sectional_dim, v_bnds, voxel_spacing):
 
     return test_crds, n_crds, Xs, Ys, Zs
 
-def generate_test_coordinates(cross_sectional_dim, v_bnds, voxel_spacing,
+def generate_test_coordinates(experiment,cross_sectional_dim, v_bnds, voxel_spacing,
                               mask_data_file=None,vertical_motor_position=0.0):
     if mask_data_file is not None:
         # Load the mask
@@ -947,11 +947,27 @@ def generate_test_coordinates(cross_sectional_dim, v_bnds, voxel_spacing,
         
         to_use = np.squeeze(np.where(mask.flatten()))
     else:
-        test_crds_full, n_crds, Xs, Ys, Zs = gen_nf_test_grid(
-            cross_sectional_dim, v_bnds, voxel_spacing)
+        test_crds_full, n_crds, Xs, Ys, Zs = gen_nf_test_grid(cross_sectional_dim, v_bnds, voxel_spacing)
         to_use = np.arange(len(test_crds_full))
         mask = np.ones(Xs.shape,bool)
 
-    test_coordinates = test_crds_full[to_use, :]
-    return Xs, Ys, Zs, mask, test_coordinates
+    # Give unique identifier to each voxel
+    dims = np.shape(Xs)
+    voxel_ids = np.zeros(dims,dtype=int)
+    id = 0
+    for x in np.arange(dims[0]):
+        for z in np.arange(dims[1]):
+            for y in np.arange(dims[2]):
+                voxel_ids[x,y,z] = id
+                id = id + 1
+
+    experiment.Xs = Xs
+    experiment.Ys = Ys
+    experiment.Zs = Zs
+    # # Flatten and mask
+    # voxel_ids = voxel_ids.flatten()
+    # voxel_ids = voxel_ids[to_use]
+    # test_coordinates = test_crds_full[to_use, :]
+
+    return Xs, Ys, Zs, mask, voxel_ids
 

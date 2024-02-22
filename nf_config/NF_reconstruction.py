@@ -94,4 +94,8 @@ class NF_ReconstructionConfig(Config):
     @property
     def expand_radius_confidence_threshold(self):
         return self._cfg.get('NF_reconstruction:expand_radius_confidence_threshold')
+    
+    @property
+    def num_orientations_in_bag(self):
+        return self._cfg.get('NF_reconstruction:num_orientations_in_bag')
         

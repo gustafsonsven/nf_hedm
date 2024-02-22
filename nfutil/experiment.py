@@ -1,12 +1,15 @@
+"""
+stuff
+"""
 import os
 import numpy as np
-import argparse
+from numpy import typing as npt
 from hexrd import instrument
 from hexrd import material
 from hexrd import constants
 from hexrd import rotations
 from hexrd import valunits
-from hexrd.crystallography import PlaneData
+from hexrd import crystallography
 import yaml
 
 from collections import namedtuple
@@ -23,6 +26,8 @@ from nf_config.nf_root import NFRootConfig
     # sys.getsizeof(experiment) = 56 so maybe not
 # TODO: Add project through single layer
 # TODO: add distortion
+# TODO: use mypy on the things
+# TODO: use pylint on the things
 
 class Experiment():
     """ Class which holds all necessary precomputed information
@@ -85,57 +90,73 @@ class Experiment():
     """
     def __init__(self, config: NFRootConfig):
         # Names and paths
-        self.analysis_name = config.analysis_name
-        self.main_directory = config.main_directory
-        self.output_directory = config.output_directory
+        self.analysis_name: str = config.analysis_name
+        self.main_directory: str = config.main_directory
+        self.output_directory: str = config.output_directory
 
         # Output plot
-        self.output_plot_check = config.output_plot_check
+        self.output_plot_check: bool = config.output_plot_check
 
         # Multiprocessing values
-        self.ncpus = config.multiprocessing.num_cpus
-        self.chunk_size = config.multiprocessing.chunk_size
+        self.ncpus: int = config.multiprocessing.num_cpus
+        self.chunk_size: int = config.multiprocessing.chunk_size
 
         # Real space parameters
-        self.cross_sectional_dimensions = config.reconstruction.cross_sectional_dimensions
-        self.voxel_size = config.reconstruction.voxel_spacing
-        self.vertical_span_of_xray_beam = config.experiment.beam_vertical_span
-        self.vertical_span_to_reconstruct = config.reconstruction.desired_vertical_span
+        self.cross_sectional_dimensions: float = config.reconstruction.cross_sectional_dimensions # TODO: Read in two values
+        self.voxel_size: float = config.reconstruction.voxel_spacing
+        self.vertical_span_of_xray_beam: npt.NDArray[np.float32] = config.experiment.beam_vertical_span
+        self.vertical_span_to_reconstruct: npt.NDArray[np.float32] = config.reconstruction.desired_vertical_span
 
         # Load in the far field data
-        self.grain_orientations_as_exponential_maps, self.grain_translation_vectors, self.ff_grain_remap_ids = self.load_ff_data(config)
+        self.grain_orientations_as_exponential_maps: npt.NDArray[np.float32] | None = None
+        self.grain_translation_vectors: npt.NDArray[np.float32] | None = None
+        self.grain_orientations_as_exponential_maps: npt.NDArray[np.float32] | None = None
+        (   self.grain_orientations_as_exponential_maps,
+            self.grain_translation_vectors,
+            self.ff_grain_remap_ids
+        ) = self.load_ff_data(config)
 
         # Load in the images and omega edges
+        self.image_stack: npt.NDArray[np.bool_] | None = None
+        self.omega_edges: npt.NDArray[np.float32] | None = None
         self.image_stack, self.omega_edges = self.load_images_and_omega_edges(config)
 
         # Omega parameters
-        self.omega_range = (self.omega_edges[0],self.omega_edges[self.image_stack.shape[0]])  # rad
-        self.omega_period = (self.omega_range[0], self.omega_range[0]+(2*np.pi)) # rad
+        self.omega_range: tuple[np.float32] = (self.omega_edges[0],self.omega_edges[self.image_stack.shape[0]])  # rad
+        self.omega_period: tuple[np.float32] = (self.omega_range[0], self.omega_range[0]+(2*np.pi)) # rad
 
         # Load the instrument and detector
-        self.instrument = self.load_instrument(config) # TODO: Is there and issue that instrument is a module name?
-        self.detector = next(iter(self.instrument.detectors.values()))
+        self.instrument: instrument.HEDMInstrument = self.load_instrument(config)
+        self.detector: Dict[str, instrument.planar_detector.PlanarDetector] = next(iter(self.instrument.detectors.values()))
 
         # Load the material and plane data
+        self.materials: Dict[str, material.Material] = None
+        self.planedata: crystallography.PlaneData = None
+        self.material_name: str = None
         self.materials, self.planedata, self.material_name = self.load_material_and_planedata(config,instrument.max_tth(self.instrument))
 
         # Load the beamstop
-        self.beamstop_mask = self.load_beamstop(config, self.detector)
+        self.beamstop_mask: npt.NDArray[np.bool_] = self.load_beamstop(config, self.detector)
 
         # Precompute a few things
+        self.x_y_omega_base_values: npt.NDArray[np.float32] | None = None
+        self.x_y_omega_inverse_deltas: npt.NDArray[np.float32] | None = None
         self.x_y_omega_base_values, self.x_y_omega_inverse_deltas = self.generate_x_y_omega_starts_and_inverse_deltas(self.detector,self.omega_edges)
 
         # Load the tomography
+        self.mask_filepath: str | None = None
+        self.vertical_motor_position: float | None = None
         self.mask_filepath, self.vertical_motor_position = self.load_tomorgraphy_mask(config)
 
         # Miscelanous things I would like to move elsewhere...maybe
-        self.centroid_serach_radius = config.reconstruction.centroid_serach_radius
-        self.expand_radius_confidence_threshold = config.reconstruction.expand_radius_confidence_threshold
+        self.centroid_serach_radius: float | None = config.reconstruction.centroid_serach_radius
+        self.expand_radius_confidence_threshold: float | None = config.reconstruction.expand_radius_confidence_threshold
+        self.num_orientations_in_bag: float | None = config.reconstruction.num_orientations_in_bag
 
         # Currently not handled cleanly but here it is - likely will change
         misorientation_bnd = config.reconstruction.misorientation['misorientation_bnd']
         misorientation_spacing = config.reconstruction.misorientation['misorientation_spacing']
-        if misorientation_bnd == None:
+        if misorientation_bnd is None:
             self.misorientation_bound_rad = None
             self.misorientation_step_rad = None
         else:
@@ -153,6 +174,9 @@ class Experiment():
 
     @staticmethod
     def load_ff_data(config: NFRootConfig):
+        """"
+        stuff
+        """
         # Read in grains.out
         ff_data = np.loadtxt(config.input_files.grains_out_file)
         print(f'Grain data loaded from: {config.input_files.grains_out_file}')
@@ -215,23 +239,26 @@ class Experiment():
             image_stack = image_stack[np.abs(num_img_to_shift):,:,:]
             nframes = np.shape(image_stack)[0]
             omega_edges = omega_edges[:num_img_to_shift]
-        
+        else:
+            # No shift needed
+            ...
+
         return image_stack, omega_edges
 
     @staticmethod
-    def load_instrument(config: NFRootConfig):
+    def load_instrument(config: NFRootConfig) -> instrument.HEDMInstrument:
         # TODO: This checking for a file should be done in the NFconfig
         # Load the detector data from an absolute path
         if os.path.isfile(config.input_files.detector_file):
             with open(config.input_files.detector_file, 'r') as f:
-                icfg = yaml.load(f, Loader=yaml.FullLoader)
-            print(f'Detector data loaded from: {config.input_files.detector_file}')
+                print(f'Loading detector data from: {config.input_files.detector_file}')
+                icfg = yaml.load(f, Loader=yaml.SafeLoader)
             return instrument.HEDMInstrument(instrument_config=icfg)
         elif os.path.isfile(config.main_directory + os.sep + config.input_files.detector_file):
             # Load from the main directory
             with open(config.main_directory + os.sep + config.input_files.detector_file, 'r') as f:
-                icfg = yaml.load(f, Loader=yaml.FullLoader)
-            print(f'Detector data loaded from: {config.main_directory + os.sep + config.input_files.detector_file}')
+                print(f'Loading detector data from: {config.main_directory + os.sep + config.input_files.detector_file}')
+                icfg = yaml.load(f, Loader=yaml.SafeLoader)
             return instrument.HEDMInstrument(instrument_config=icfg)
         else:
             # No idea where it is
@@ -250,14 +277,14 @@ class Experiment():
         # Load the materials file
         # TODO: This checking for a file should be done in the NFconfig
         if os.path.isfile(config.input_files.materials_file):
-            materials = material.load_materials_hdf5(cfg.input_files.materials_file, dmin=dmin,kev=beam_energy)
+            materials = material.load_materials_hdf5(config.input_files.materials_file, dmin=dmin,kev=beam_energy)
             print(f'{material_name} material data loaded from: {config.input_files.materials_file}')
         elif os.path.isfile(config.main_directory + os.sep + config.input_files.materials_file):
             materials = material.load_materials_hdf5(config.main_directory + os.sep + config.input_files.materials_file, dmin=dmin,kev=beam_energy)
             print(f'{material_name} material data loaded from: {config.main_directory + os.sep + config.input_files.materials_file}')
         else:
             print('No materials file found.')
-        
+
         # Load material specific planedata
         planedata = materials[config.experiment.material_name].planeData
 
@@ -322,4 +349,3 @@ class Experiment():
         detector_params = np.hstack([detector_passive_euler_angles_lab_xyz, detector_translation_vector, chi, sample_translation_vector])
 
         return detector_params
-    
