@@ -204,10 +204,11 @@ def _test_many_orientations_at_many_coordinates(experiment,all_orientation_data,
     # How many coordinate points
     local_voxel_ids_to_test = voxel_ids_to_test[start:stop]
     n_coords = np.shape(local_voxel_ids_to_test)[0]
-    # Initalize arrays
+    # Initalize
     all_exp_maps = np.zeros([n_coords,3])
     all_confidence = np.zeros(n_coords)
     all_idx = np.zeros(n_coords,int)
+    s = scipy.ndimage.generate_binary_structure(3,3)
     # Pull data from the experiment
     grain_centroids = experiment.grain_translation_vectors
     all_ids = experiment.all_ids
@@ -259,14 +260,15 @@ def _test_many_orientations_at_many_coordinates(experiment,all_orientation_data,
                 orientation_data = [test_exp_maps, test_angles, test_rMat_ss, test_gvec_cs, test_rMat_c]
         else:
             # We have a grain map, pull just the neighboring voxel orientations
-            grain_id = grain_map[id_mask]
+            grain_id = grain_map[id_mask][0].astype(int)
             # Generate a structure
-            s = scipy.ndimage.generate_binary_structure(3,3)
-            local_mask = scipy.ndimage.binary_dilation(id_mask, structure=s)
-            ids_to_test = np.unique(grain_map[local_mask]).astype(int)
+            #local_mask = scipy.ndimage.binary_dilation(id_mask, structure=s)
+            #ids_to_test = np.unique(grain_map[local_mask]).astype(int)
+            voxel_ids_to_test = experiment.connectivity_list[id]
+            ids_to_test = np.unique(grain_map[np.isin(experiment.all_ids,voxel_ids_to_test)]).astype(int)
             ids_to_test = ids_to_test[ids_to_test != -1]
             other_ids = ids_to_test[ids_to_test != grain_id]
-            if other_ids is not None:
+            if np.size(other_ids) != 0:
                 # Grab the orientation data
                 num_local_oris = np.shape(ids_to_test)[0]
                 exp_maps = [None] * num_local_oris
@@ -280,7 +282,20 @@ def _test_many_orientations_at_many_coordinates(experiment,all_orientation_data,
                     rMat_ss[ori] = test_rMat_ss[ids_to_test[ori]]
                     gvec_cs[ori] = test_gvec_cs[ids_to_test[ori]]
                     rMat_c[ori] = test_rMat_c[ids_to_test[ori]]
-
+                orientation_data = [exp_maps, angles, rMat_ss, gvec_cs, rMat_c]
+            else:
+                num_local_oris = 1
+                exp_maps = [None] * num_local_oris
+                angles = [None] * num_local_oris
+                rMat_ss = [None] * num_local_oris
+                gvec_cs = [None] * num_local_oris
+                rMat_c = [None] * num_local_oris
+                for ori in np.arange(num_local_oris):
+                    exp_maps[ori] = test_exp_maps[grain_id]
+                    angles[ori] = test_angles[grain_id]
+                    rMat_ss[ori] = test_rMat_ss[grain_id]
+                    gvec_cs[ori] = test_gvec_cs[grain_id]
+                    rMat_c[ori] = test_rMat_c[grain_id]
                 orientation_data = [exp_maps, angles, rMat_ss, gvec_cs, rMat_c]
 
         # Test the orientation bag
@@ -914,7 +929,10 @@ def reconstruct_nf(experiment,controller,all_orientation_data):
         while np.shape(voxel_ids_to_test)[0] != 0:
             # Tell the user
             print(f'Starting iteration number {l}, {np.shape(voxel_ids_to_test)[0]} voxels to test.')
+            # Init timer
             t1 = timeit.default_timer()
+            # Tick the test counter
+            num_tests = num_tests + np.shape(voxel_ids_to_test)[0]
             # Redo chunking
             n_coords_new = np.shape(voxel_ids_to_test)[0]
             chunk_size = experiment.chunk_size
@@ -956,7 +974,14 @@ def reconstruct_nf(experiment,controller,all_orientation_data):
             # Remap to spatial coordinates
             new_grain_map, confidence_map = process_raw_data(final_confidence,final_idx.astype(int),experiment.Xs.shape,mask=experiment.mask)
             # Reset voxels to test
-            voxel_ids_to_test = experiment.all_ids[new_grain_map != grain_map]
+            if grain_map is None:
+                grain_map = np.ones(np.shape(experiment.mask)) * -1
+            masking = np.zeros(np.shape(grain_map),dtype=bool)
+            masking[new_grain_map != grain_map] = 1
+            s = scipy.ndimage.generate_binary_structure(3,3)
+            masking = scipy.ndimage.binary_dilation(masking, structure=s)
+            masking[experiment.mask == 0] = 0
+            voxel_ids_to_test = experiment.all_ids[masking]
             # Reset the grain map
             grain_map = new_grain_map
             # Tell the user
@@ -966,9 +991,9 @@ def reconstruct_nf(experiment,controller,all_orientation_data):
                 print(f'Done with iteration number {l} in {np.round(elapsed,1)} seconds')
             else:
                 print(f'Done with iteration number {l} in {np.round(elapsed/60,1)} minutes')
-            # Tick the counters
-            num_tests = num_tests + np.shape(voxel_ids_to_test)[0]
+            # Tick the loop counter
             l = l + 1
+            experiment.voxel_ids_to_test = voxel_ids_to_test
 
     # Remap to FF grain ids
     final_grain_map, final_confidence_map = process_raw_data(final_confidence,final_idx.astype(int),experiment.Xs.shape,mask=experiment.mask,id_remap=experiment.ff_grain_remap_ids)
@@ -982,6 +1007,7 @@ def reconstruct_nf(experiment,controller,all_orientation_data):
         print(f'Completed {num_tests} coordinate tests in {np.round(elapsed/60,1)} minutes ({elapsed/num_tests} seconds per test).')
 
     return experiment, final_grain_map, final_confidence_map
+
 
 def load_all_images(filenames,controller):
     """
@@ -1688,6 +1714,24 @@ def generate_test_coordinates(experiment,cross_sectional_dim, v_bnds, voxel_spac
                 all_ids[x,y,z] = id
                 id = id + 1
 
+    # Generate connectivity matrix
+    connectivity_list = [None] * id
+    greater_array = np.ones([dims[0]+2,dims[1]+2,dims[2]+2],dtype=int)*-1
+    greater_array[1:-1,1:-1,1:-1] = all_ids
+    id = 0
+    shape_array = np.zeros(dims,dtype=int)
+    for x in np.arange(dims[0]):
+        for z in np.arange(dims[1]):
+            for y in np.arange(dims[2]):
+                x_idx = x+1
+                y_idx = y+1
+                z_idx = z+1
+                nearby_ids = greater_array[x_idx-1:x_idx+2,y_idx-1:y_idx+2,z_idx-1:z_idx+2].flatten()
+                nearby_ids = nearby_ids[nearby_ids != -1]
+                connectivity_list[id] = nearby_ids
+                shape_array[x,y,z] = len(nearby_ids)
+                id = id + 1
+
     experiment.Xs = Xs
     experiment.Ys = Ys
     experiment.Zs = Zs
@@ -1695,6 +1739,8 @@ def generate_test_coordinates(experiment,cross_sectional_dim, v_bnds, voxel_spac
     experiment.mask = mask
     all_coordinates = np.vstack([Xs,Ys,Zs])
     experiment.all_coordinates = all_coordinates
+    experiment.connectivity_list = connectivity_list
+    experiment.shape_array = shape_array
 
     return experiment
 

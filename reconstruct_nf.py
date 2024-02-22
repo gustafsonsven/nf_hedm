@@ -65,6 +65,8 @@ import numpy as np
 import nfutil
 import nf_config
 
+import importlib
+from matplotlib import pyplot as plt
 # # Matplotlib
 # # This is to allow interactivity of inline plots in your gui
 # # the import ipywidgets as widgets line is not needed - however, you do need to run a pip install ipywidgets
@@ -104,7 +106,7 @@ all_orientation_data = nfutil.processor_functions.precompute_diffraction_data(ex
 # %% ==========================================================================
 # TEST ORIENTATIONS AND PROCESS OUTPUT
 # =============================================================================
-#importlib.reload(nfutil.processor_functions)
+importlib.reload(nfutil.processor_functions)
 experiment, grain_map, confidence_map = nfutil.processor_functions.reconstruct_nf(experiment,controller,all_orientation_data)
 
 
@@ -112,7 +114,7 @@ experiment, grain_map, confidence_map = nfutil.processor_functions.reconstruct_n
 # Show Images - CAN BE EDITED
 # =============================================================================
 layer_num = 0 # Which layer in Y?
-conf_thresh = 0.5 # If set to None no threshold is used
+conf_thresh = 0.1 # If set to None no threshold is used
 nfutil.graphics.plot_ori_map(grain_map, confidence_map, experiment.Xs, experiment.Zs, experiment.grain_orientations_as_exponential_maps, 
                     layer_num,experiment.materials[experiment.material_name],experiment.ff_grain_remap_ids,conf_thresh)
 # Quick note - nfutil assumes that the IPF reference vector is [0 1 0]
