@@ -3,6 +3,8 @@ stuff
 """
 import os
 import numpy as np
+import multiprocessing
+
 from numpy import typing as npt
 from hexrd import instrument
 from hexrd import material
@@ -171,6 +173,14 @@ class Experiment():
         self.coord_cutoff_scale = config.reconstruction.missing_grains['coord_cutoff_scale']
         self.iter_cutoff = config.reconstruction.missing_grains['iter_cutoff']
         self.re_run_and_save = config.reconstruction.missing_grains['re_run_and_save']
+
+        # Generate test coordinates
+        self.generate_test_coordinates()
+
+        # Set the multiprocessing method
+        self.multiprocessing_start_method = 'fork' if hasattr(os, 'fork') else 'spawn'
+        if multiprocessing.get_start_method() != self.multiprocessing_start_method:
+            multiprocessing.set_start_method(self.multiprocessing_start_method, force=True)
 
     @staticmethod
     def load_ff_data(config: NFRootConfig):
@@ -349,3 +359,86 @@ class Experiment():
         detector_params = np.hstack([detector_passive_euler_angles_lab_xyz, detector_translation_vector, chi, sample_translation_vector])
 
         return detector_params
+    
+    def generate_test_coordinates(self):
+        if self.mask_filepath is not None:
+            # Load the mask
+            mask_data = np.load(self.mask_filepath)
+
+            mask_full = mask_data['mask']
+            Xs_mask = mask_data['Xs']
+            Ys_mask = mask_data['Ys']+(self.vertical_motor_position)
+            Zs_mask = mask_data['Zs']
+
+            # need to think about how to handle a single layer in this context
+            tomo_layer_centers = np.squeeze(Ys_mask[:, 0, 0])
+            above = np.where(tomo_layer_centers >= self.vertical_span_to_reconstruct[0])
+            below = np.where(tomo_layer_centers < self.vertical_span_to_reconstruct[1])
+
+            in_bnds = np.intersect1d(above, below)
+
+            mask = mask_full[in_bnds]
+            Xs = Xs_mask[in_bnds]
+            Ys = Ys_mask[in_bnds]
+            Zs = Zs_mask[in_bnds]
+
+        else:
+            test_crds_full, n_crds, Xs, Ys, Zs = self.gen_nf_test_grid(self.cross_sectional_dimensions, self.vertical_span_to_reconstruct, self.voxel_size)
+            mask = np.ones(Xs.shape,bool)
+
+        # Give unique identifier to each voxel
+        dims = np.shape(Xs)
+        all_ids = np.zeros(dims,dtype=int)
+        id = 0
+        for x in np.arange(dims[0]):
+            for z in np.arange(dims[1]):
+                for y in np.arange(dims[2]):
+                    all_ids[x,y,z] = id
+                    id = id + 1
+
+        # Generate connectivity matrix
+        connectivity_list = [None] * id
+        greater_array = np.ones([dims[0]+2,dims[1]+2,dims[2]+2],dtype=int)*-1
+        greater_array[1:-1,1:-1,1:-1] = all_ids
+        id = 0
+        shape_array = np.zeros(dims,dtype=int)
+        for x in np.arange(dims[0]):
+            for z in np.arange(dims[1]):
+                for y in np.arange(dims[2]):
+                    x_idx = x+1
+                    y_idx = y+1
+                    z_idx = z+1
+                    nearby_ids = greater_array[x_idx-1:x_idx+2,y_idx-1:y_idx+2,z_idx-1:z_idx+2].flatten()
+                    nearby_ids = nearby_ids[nearby_ids != -1]
+                    connectivity_list[id] = nearby_ids
+                    shape_array[x,y,z] = len(nearby_ids)
+                    id = id + 1
+
+        self.Xs = Xs
+        self.Ys = Ys
+        self.Zs = Zs
+        self.all_voxel_ids = all_ids
+        self.sample_mask = mask
+        self.all_coordinates = np.vstack([Xs,Ys,Zs])
+        self.connectivity_list = connectivity_list
+        self.shape_array = shape_array
+
+    @staticmethod
+    def gen_nf_test_grid(cross_sectional_dim, v_bnds, voxel_spacing):
+        Zs_list=np.arange(-cross_sectional_dim/2.+voxel_spacing/2.,cross_sectional_dim/2.,voxel_spacing)
+        Xs_list=np.arange(-cross_sectional_dim/2.+voxel_spacing/2.,cross_sectional_dim/2.,voxel_spacing)
+
+        if v_bnds[0]==v_bnds[1]:
+            Xs,Ys,Zs=np.meshgrid(Xs_list,v_bnds[0],Zs_list)
+        else:
+            Xs,Ys,Zs=np.meshgrid(Xs_list,np.arange(v_bnds[0]+voxel_spacing/2.,v_bnds[1],voxel_spacing),Zs_list)
+            #note numpy shaping of arrays is goofy, returns(length(y),length(x),length(z))
+
+        test_crds = np.vstack([Xs.flatten(), Ys.flatten(), Zs.flatten()]).T
+        n_crds = len(test_crds)
+
+        return test_crds, n_crds, Xs, Ys, Zs
+
+
+
+

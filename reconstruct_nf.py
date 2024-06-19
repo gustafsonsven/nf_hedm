@@ -95,19 +95,17 @@ configuration_filepath = '/Users/seg246/CHESS/seg246/software/development/nf_con
 config = nf_config.open_file(configuration_filepath)[0]
 # Generate the experiment
 experiment = nfutil.experiment.Experiment(config)
-# Generate the controller
-controller = nfutil.processor_functions.build_controller(config)
 
 # %% ==========================================================================
 # PRECOMPUTE ORIENTATION DATA
 # =============================================================================
-all_orientation_data = nfutil.processor_functions.precompute_diffraction_data(experiment,controller,experiment.grain_orientations_as_exponential_maps)
+all_orientation_data = nfutil.processor_functions.precompute_diffraction_data(experiment,experiment.grain_orientations_as_exponential_maps)
 
 # %% ==========================================================================
 # TEST ORIENTATIONS AND PROCESS OUTPUT
 # =============================================================================
 importlib.reload(nfutil.processor_functions)
-experiment, grain_map, confidence_map = nfutil.processor_functions.reconstruct_nf(experiment,controller,all_orientation_data)
+grain_map, confidence_map = nfutil.processor_functions.reconstruct_nf(experiment,all_orientation_data)
 
 
 # %% ==========================================================================
