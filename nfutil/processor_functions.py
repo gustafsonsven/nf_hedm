@@ -192,13 +192,13 @@ def _test_orientation_bag_at_coordinate(experiment,coord_to_test,orientation_dat
 
     # Find the index of the max confidence
     idx = ids_to_test[np.where(all_confidence == np.max(all_confidence))[0][0]] # Grab just the first instance if there is a tie 
-
+    exp_map = all_exp_maps[np.where(all_confidence == np.max(all_confidence))[0][0]]
     # What is the hightest confidence orientation and what is its confidence
     confidence = np.max(all_confidence)
 
-    return confidence, idx
+    return exp_map, confidence, idx
 
-def _test_many_orientations_at_many_coordinates(experiment,all_orientation_data,current_voxel_ids_to_test,grain_map,start=0,stop=0):
+def _test_many_orientations_at_many_coordinates(experiment,all_orientation_data,current_voxel_ids_to_test,grain_map,exp_map_map,refine_yes_no,start=0,stop=0):
     # How many orientations do we have?
     n_oris = np.shape(all_orientation_data[0])[0]
     # How many coordinate points
@@ -211,7 +211,7 @@ def _test_many_orientations_at_many_coordinates(experiment,all_orientation_data,
 
     # Pull data from the experiment
     grain_centroids = experiment.grain_translation_vectors
-    all_ids = experiment.all_ids
+    all_ids = experiment.all_voxel_ids
     Xs = experiment.Xs
     Ys = experiment.Ys
     Zs = experiment.Zs
@@ -258,11 +258,42 @@ def _test_many_orientations_at_many_coordinates(experiment,all_orientation_data,
                 # We do not have grain centroids, make orientation bag the full size
                 ids_to_test = np.arange(n_oris)
                 orientation_data = [test_exp_maps, test_angles, test_rMat_ss, test_gvec_cs, test_rMat_c]
+        elif refine_yes_no == 1:
+            # We have a grain map, pull just the neighboring voxel orientations
+            grain_id = grain_map[id_mask][0].astype(int)
+            current_voxel_ids_to_test = experiment.connectivity_list[id]
+            # Grab these orientaitons 
+            exp_map_list = exp_map_map[np.isin(all_ids,current_voxel_ids_to_test)]
+            ids_to_test = grain_map[np.isin(all_ids,current_voxel_ids_to_test)].astype(int)
+            exp_map_list = exp_map_list[ids_to_test != -1,:]
+            ids_to_test = ids_to_test[ids_to_test != -1]
+            # Expand the orientations with misorientation 
+            mis_amt = experiment.misorientation_bound_rad # This is the amount of misorientation allowed on one side of the original orientation
+            spacing = experiment.misorientation_step_rad # This is the spacing between orientations
+            mis_amt = 0.1/180*np.pi
+            spacing = 0.1/180*np.pi
+            ori_pts = np.arange(-mis_amt, (mis_amt+(spacing*0.999)),spacing) # Create a linup of the orientations to go on either side
+            XsO, YsO, ZsO = np.meshgrid(ori_pts, ori_pts, ori_pts) # Make that 3D
+            grid0 = np.vstack([XsO.flatten(), YsO.flatten(), ZsO.flatten()]).T # Re-arange
+
+            # Populate the greater list
+            num_original_oris = np.shape(ids_to_test)[0]
+            greater_exp_map_list = np.zeros([num_original_oris*np.shape(grid0)[0],3])
+            greater_ids_to_test = np.zeros(num_original_oris*np.shape(grid0)[0],int)
+            count = 0
+            for ori in np.arange(num_original_oris):
+                greater_exp_map_list[count:count+np.shape(grid0)[0]] = grid0 + np.r_[exp_map_list[ori]]
+                greater_ids_to_test[count:count+np.shape(grid0)[0]] = ids_to_test[ori]
+                count = count + np.shape(grid0)[0]
+            exp_map_list = greater_exp_map_list
+            ids_to_test = greater_ids_to_test
+            # Generate orientations
+            orientation_data = _precompute_diffraction_data_of_many_orientations(experiment,exp_map_list)[0:5]
         else:
             # We have a grain map, pull just the neighboring voxel orientations
             grain_id = grain_map[id_mask][0].astype(int)
             current_voxel_ids_to_test = experiment.connectivity_list[id]
-            ids_to_test = np.unique(grain_map[np.isin(experiment.all_ids,current_voxel_ids_to_test)]).astype(int)
+            ids_to_test = np.unique(grain_map[np.isin(all_ids,current_voxel_ids_to_test)]).astype(int)
             ids_to_test = ids_to_test[ids_to_test != -1]
             other_ids = ids_to_test[ids_to_test != grain_id]
             if np.size(other_ids) != 0:
@@ -294,10 +325,9 @@ def _test_many_orientations_at_many_coordinates(experiment,all_orientation_data,
                     gvec_cs[ori] = test_gvec_cs[grain_id]
                     rMat_c[ori] = test_rMat_c[grain_id]
                 orientation_data = [exp_maps, angles, rMat_ss, gvec_cs, rMat_c]
-
         # Test the orientation bag
-        confidence, idx = _test_orientation_bag_at_coordinate(experiment,coordinate,orientation_data,ids_to_test)
-        all_exp_maps[i,:] = test_exp_maps[idx]
+        exp_map, confidence, idx = _test_orientation_bag_at_coordinate(experiment,coordinate,orientation_data,ids_to_test)
+        all_exp_maps[i,:] = exp_map
         all_confidence[i] = confidence
         all_idx[i] = idx
 
@@ -869,7 +899,7 @@ def precompute_diffraction_data(experiment,exp_maps_to_precompute):
 
 
 
-def reconstruct_nf(experiment,all_orientation_data):
+def reconstruct_nf(experiment,all_orientation_data,refine_yes_no):
     # Start a timer
     t0 = timeit.default_timer()
 
@@ -912,6 +942,7 @@ def reconstruct_nf(experiment,all_orientation_data):
         final_confidence = np.zeros(n_coords)
         final_idx = np.zeros(n_coords)
         grain_map = None
+        exp_map_map = None
         l = 0
         num_tests = 0
         while np.shape(current_voxel_ids_to_test)[0] != 0:
@@ -940,7 +971,7 @@ def reconstruct_nf(experiment,all_orientation_data):
             all_confidence = np.zeros(n_coords_new)
             all_idx = np.zeros(n_coords_new)
             # Package all inputs to the distributor function
-            state = (starts,stops,experiment,all_orientation_data,current_voxel_ids_to_test,grain_map)
+            state = (starts,stops,experiment,all_orientation_data,current_voxel_ids_to_test,grain_map,exp_map_map,refine_yes_no)
             # Start the multiprocessing loop
             with multiprocessing_pool(ncpus,state) as pool:
                 for vals1, vals2, vals3, start, stop in pool.imap_unordered(_test_many_orientations_at_many_coordinates_distributor,chunks):
@@ -959,18 +990,25 @@ def reconstruct_nf(experiment,all_orientation_data):
             final_confidence[masking] = all_confidence
             final_idx[masking] = all_idx
             # Remap to spatial coordinates
-            new_grain_map, confidence_map = process_raw_data(final_confidence,final_idx.astype(int),experiment.Xs.shape,mask=experiment.mask)
+            new_grain_map, confidence_map, new_exp_map_map = process_raw_data(final_confidence,final_idx.astype(int),experiment.Xs.shape,mask=experiment.sample_mask,final_exp_maps = final_exp_maps)
             # Reset voxels to test
             if grain_map is None:
                 grain_map = np.ones(np.shape(experiment.sample_mask)) * -1
+                exp_map_map = np.zeros([np.shape(experiment.sample_mask)[0],np.shape(experiment.sample_mask)[1],np.shape(experiment.sample_mask)[2],3])
+            # Check if either orientation or grain id changed
             masking = np.zeros(np.shape(grain_map),dtype=bool)
+            ori_masking = np.zeros(np.shape(exp_map_map),dtype=bool)
             masking[new_grain_map != grain_map] = 1
+            ori_masking[np.abs(new_exp_map_map - exp_map_map) > (10*np.finfo(float).eps)] = 1
+            ori_masking = np.sum(ori_masking,3)
+            masking[ori_masking>0] = 1
             s = scipy.ndimage.generate_binary_structure(3,3)
             masking = scipy.ndimage.binary_dilation(masking, structure=s)
             masking[experiment.sample_mask == 0] = 0
             current_voxel_ids_to_test = experiment.all_voxel_ids[masking]
             # Reset the grain map
             grain_map = new_grain_map
+            exp_map_map = new_exp_map_map
             # Tell the user
             t2 = timeit.default_timer()
             elapsed = t2-t1
@@ -983,7 +1021,7 @@ def reconstruct_nf(experiment,all_orientation_data):
             experiment.current_voxel_ids_to_test = current_voxel_ids_to_test
 
     # Remap to FF grain ids
-    final_grain_map, final_confidence_map = process_raw_data(final_confidence,final_idx.astype(int),experiment.Xs.shape,mask=experiment.sample_mask,id_remap=experiment.ff_grain_remap_ids)
+    final_grain_map, final_confidence_map, final_exp_map_map = process_raw_data(final_confidence,final_idx.astype(int),experiment.Xs.shape,mask=experiment.sample_mask,id_remap=experiment.ff_grain_remap_ids,final_exp_maps=final_exp_maps)
 
     # How long did it take?
     t1 = timeit.default_timer()
@@ -993,7 +1031,7 @@ def reconstruct_nf(experiment,all_orientation_data):
     else:
         print(f'Completed {num_tests} coordinate tests in {np.round(elapsed/60,1)} minutes ({elapsed/num_tests} seconds per test).')
 
-    return final_grain_map, final_confidence_map
+    return final_grain_map, final_confidence_map, final_exp_map_map
 
 def load_all_images(filenames,controller):
     """
@@ -1632,7 +1670,7 @@ def multiprocessing_pool(ncpus, state):
 # RAW DATA PROCESSOR
 # ===============================================================================
 # Raw data processor
-def process_raw_data(raw_confidence,raw_idx,volume_dims,mask=None,id_remap=None,raw_misorientation=None):
+def process_raw_data(raw_confidence,raw_idx,volume_dims,mask=None,id_remap=None,raw_misorientation=None,final_exp_maps = None):
     # Assign the confidence to the correct voxel
     confidence_map = np.zeros(volume_dims)
     if mask is None:
@@ -1644,6 +1682,12 @@ def process_raw_data(raw_confidence,raw_idx,volume_dims,mask=None,id_remap=None,
         mapped_idx = id_remap[raw_idx]
     else:
         mapped_idx = raw_idx
+
+    exp_map_map = np.zeros([volume_dims[0],volume_dims[1],volume_dims[2],3])
+    if final_exp_maps is not None:
+        exp_map_map[mask,0] = final_exp_maps[:,0]
+        exp_map_map[mask,1] = final_exp_maps[:,1]
+        exp_map_map[mask,2] = final_exp_maps[:,2]
     
     # Assign the indexing to the correct voxel
     grain_map = np.zeros(volume_dims)
@@ -1655,6 +1699,6 @@ def process_raw_data(raw_confidence,raw_idx,volume_dims,mask=None,id_remap=None,
         misorientation_map[mask] = raw_misorientation
         return grain_map, confidence_map, misorientation_map
     else:
-        return grain_map, confidence_map
+        return grain_map, confidence_map, exp_map_map
 
 

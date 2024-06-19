@@ -117,7 +117,7 @@ NF_reconstruction:
     use_single_layer: False # True uses the center mask layer for all vertical positions
     vertical_motor_position: 0.0 # mm - What is the vertical motor's position?
   
-  cross_sectional_dimensions: 1.4 # mm 
+  cross_sectional_dimensions: 1.2 # mm 
   voxel_spacing: 0.005  # mm - cubic voxel size for reconstruction
   desired_vertical_span: [-0.0025, 0.0025] # mm - span of vertical space to reconstruct
 
@@ -158,7 +158,7 @@ NF_reconstruction:
 
 
 multiprocessing:
-  num_cpus: half # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
+  num_cpus: 8 # Number of threads to use [all = os.cpu_count(), half = os.cpu_count()/2 (default), negative number = os.cpu_count()-num, positive number = num]
   chunk_size: -1 # Use -1 if you wish automatic chunk size calculation
   # RAM_set: True  # if True, manually set max amount of ram
   # max_RAM: 256  # only used if RAM_set is true. in GB

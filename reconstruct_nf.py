@@ -105,7 +105,8 @@ all_orientation_data = nfutil.processor_functions.precompute_diffraction_data(ex
 # TEST ORIENTATIONS AND PROCESS OUTPUT
 # =============================================================================
 importlib.reload(nfutil.processor_functions)
-grain_map, confidence_map = nfutil.processor_functions.reconstruct_nf(experiment,all_orientation_data)
+refine_yes_no = 1
+grain_map, confidence_map, exp_map_map = nfutil.processor_functions.reconstruct_nf(experiment,all_orientation_data,refine_yes_no)
 
 
 # %% ==========================================================================
